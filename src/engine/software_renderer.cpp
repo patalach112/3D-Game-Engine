@@ -147,11 +147,17 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
     std::fill(depth_.begin(),depth_.end(),std::numeric_limits<float>::infinity());
     const Basis basis=camera_basis(camera);
     const float focal=(static_cast<float>(height_)*0.5F)/std::tan(camera.vertical_fov_degrees*kPi/360.0F);
+    // Project from camera space. Values that overflow or land behind the near
+    // plane are reported as invisible instead of producing NaN screen coords.
+    const auto project_camera=[&](const CameraPoint& p)->ScreenPoint {
+        if(p.z<kNearPlane||!std::isfinite(p.x)||!std::isfinite(p.y)||!std::isfinite(p.z)) return {};
+        const float sx=static_cast<float>(width_)*0.5F+p.x*focal/p.z;
+        const float sy=static_cast<float>(height_)*0.5F-p.y*focal/p.z;
+        if(!std::isfinite(sx)||!std::isfinite(sy)) return {};
+        return {sx,sy,p.z,true};
+    };
     const auto project=[&](Vec3 world)->ScreenPoint {
-        const CameraPoint p=to_camera(world,camera,basis);
-        if(p.z<kNearPlane) return {};
-        return {static_cast<float>(width_)*0.5F+p.x*focal/p.z,
-                static_cast<float>(height_)*0.5F-p.y*focal/p.z,p.z,true};
+        return project_camera(to_camera(world,camera,basis));
     };
     const auto put_pixel=[&](int x,int y,float z,std::uint32_t color,bool depth_test) {
         if(x<0||x>=width_||y<0||y>=height_) return;
@@ -232,32 +238,38 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
         const float rz=entity.transform.rotation.z*kPi/180.0F;
         const float cx=std::cos(rx),sx=std::sin(rx),cy=std::cos(ry),sy=std::sin(ry),cz=std::cos(rz),sz=std::sin(rz);
         std::vector<Vec3> world(mesh.vertices.size());
-        std::vector<ScreenPoint> screen(mesh.vertices.size());
+        std::vector<CameraPoint> camera_space(mesh.vertices.size());
         for(std::size_t i=0;i<mesh.vertices.size();++i) {
             Vec3 p=mesh.vertices[i]; p={p.x*scale.x,p.y*scale.y,p.z*scale.z};
             const Vec3 px{p.x,p.y*cx-p.z*sx,p.y*sx+p.z*cx};
             const Vec3 py{px.x*cy+px.z*sy,px.y,-px.x*sy+px.z*cy};
             const Vec3 pz{py.x*cz-py.y*sz,py.x*sz+py.y*cz,py.z};
-            world[i]=add(pz,entity.transform.position); screen[i]=project(world[i]);
+            world[i]=add(pz,entity.transform.position);
+            camera_space[i]=to_camera(world[i],camera,basis);
         }
         const bool is_selected=entity.id==selected;
         std::uint32_t base=entity.primitive==PrimitiveType::Sphere?0x007FA8D8U:
             entity.primitive==PrimitiveType::Cylinder?0x007DAF82U:
             entity.primitive==PrimitiveType::Plane?0x00B2A27DU:0x00A7A7AAU;
         if(is_selected) base=0x00D8D8DAU;
-        for(const auto& tri:mesh.triangles) {
-            const int ia=tri[0],ib=tri[1],ic=tri[2];
-            const ScreenPoint p0=screen[static_cast<std::size_t>(ia)],p1=screen[static_cast<std::size_t>(ib)],p2=screen[static_cast<std::size_t>(ic)];
-            if(!p0.visible||!p1.visible||!p2.visible) continue;
-            const Vec3 normal=normalize(cross(subtract(world[static_cast<std::size_t>(ib)],world[static_cast<std::size_t>(ia)]),
-                                               subtract(world[static_cast<std::size_t>(ic)],world[static_cast<std::size_t>(ia)])));
-            const std::uint32_t color=shade(base,0.48F+0.52F*std::abs(dot(normal,light)));
+
+        // Przeciągamy trójkąty przez płaszczyznę bliskości zamiast ich odrzucać:
+        // inaczej duży obiekt, w którym kamera się znajduje, traci każdą ścianę,
+        // której wierzchołki leżą po dwóch stronach płaszczyzny bliskości.
+        const auto fill_triangle=[&](const ScreenPoint& p0,const ScreenPoint& p1,const ScreenPoint& p2,
+                                     std::uint32_t fill_color) {
             const float area=(p1.x-p0.x)*(p2.y-p0.y)-(p1.y-p0.y)*(p2.x-p0.x);
-            if(std::abs(area)<1.0e-5F) continue;
-            const int min_x=std::max(0,static_cast<int>(std::floor(std::min({p0.x,p1.x,p2.x}))));
-            const int max_x=std::min(width_-1,static_cast<int>(std::ceil(std::max({p0.x,p1.x,p2.x}))));
-            const int min_y=std::max(0,static_cast<int>(std::floor(std::min({p0.y,p1.y,p2.y}))));
-            const int max_y=std::min(height_-1,static_cast<int>(std::ceil(std::max({p0.y,p1.y,p2.y}))));
+            if(std::abs(area)<1.0e-5F) return;
+            const float x_min=std::min({p0.x,p1.x,p2.x}),x_max=std::max({p0.x,p1.x,p2.x});
+            const float y_min=std::min({p0.y,p1.y,p2.y}),y_max=std::max({p0.y,p1.y,p2.y});
+            if(!std::isfinite(x_min)||!std::isfinite(x_max)||!std::isfinite(y_min)||!std::isfinite(y_max)) return;
+            // Przyciągamy granice do zakresu int przed konwersją; wynik jest ten
+            // sam, bo skanowanie jest i tak ograniczone do viewporta.
+            constexpr float kLimit=1.0e7F;
+            const int min_x=std::max(0,static_cast<int>(std::floor(std::max(x_min,-kLimit))));
+            const int max_x=std::min(width_-1,static_cast<int>(std::ceil(std::min(x_max,kLimit))));
+            const int min_y=std::max(0,static_cast<int>(std::floor(std::max(y_min,-kLimit))));
+            const int max_y=std::min(height_-1,static_cast<int>(std::ceil(std::min(y_max,kLimit))));
             for(int y=min_y;y<=max_y;++y) for(int x=min_x;x<=max_x;++x) {
                 const float px=static_cast<float>(x)+0.5F,py=static_cast<float>(y)+0.5F;
                 const float w0=((p1.x-px)*(p2.y-py)-(p1.y-py)*(p2.x-px))/area;
@@ -265,8 +277,46 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
                 const float w2=1.0F-w0-w1;
                 if(w0 < -0.001F||w1 < -0.001F||w2 < -0.001F) continue;
                 const float inv=w0/p0.depth+w1/p1.depth+w2/p2.depth;
-                put_pixel(x,y,1.0F/inv,color,true);
+                if(!std::isfinite(inv)||inv<=0.0F) continue;
+                put_pixel(x,y,1.0F/inv,fill_color,true);
             }
+        };
+
+        for(const auto& tri:mesh.triangles) {
+            const int ia=tri[0],ib=tri[1],ic=tri[2];
+            const CameraPoint ca=camera_space[static_cast<std::size_t>(ia)];
+            const CameraPoint cb=camera_space[static_cast<std::size_t>(ib)];
+            const CameraPoint cc=camera_space[static_cast<std::size_t>(ic)];
+
+            // Sutherland-Hodgman przeciwko płaszczyznie bliskości: zachowana część
+            // trójkąta to wypukły wielokąt o 3..6 wierzchołkach.
+            std::array<CameraPoint,6> poly{};
+            int count=0;
+            const auto clip_edge=[&](const CameraPoint& a,const CameraPoint& b) {
+                const bool a_inside=a.z>=kNearPlane,b_inside=b.z>=kNearPlane;
+                if(a_inside&&b_inside) {
+                    if(count<6) poly[count++]=b;
+                } else if(a_inside&&!b_inside) {
+                    const float t=(kNearPlane-a.z)/(b.z-a.z);
+                    if(count<6) poly[count++]={a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,kNearPlane};
+                } else if(!a_inside&&b_inside) {
+                    const float t=(kNearPlane-a.z)/(b.z-a.z);
+                    if(count<6) poly[count++]={a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,kNearPlane};
+                    if(count<6) poly[count++]=b;
+                }
+            };
+            clip_edge(ca,cb);
+            clip_edge(cb,cc);
+            clip_edge(cc,ca);
+            if(count<3) continue;
+
+            const Vec3 normal=normalize(cross(subtract(world[static_cast<std::size_t>(ib)],world[static_cast<std::size_t>(ia)]),
+                                               subtract(world[static_cast<std::size_t>(ic)],world[static_cast<std::size_t>(ia)])));
+            const std::uint32_t color=shade(base,0.48F+0.52F*std::abs(dot(normal,light)));
+
+            std::array<ScreenPoint,6> sp{};
+            for(int i=0;i<count;++i) sp[i]=project_camera(poly[i]);
+            for(int i=1;i+1<count;++i) fill_triangle(sp[0],sp[i],sp[i+1],color);
         }
         const bool show_edges=entity.primitive==PrimitiveType::Cube||(is_selected&&entity.primitive!=PrimitiveType::Sphere);
         if(show_edges) for(const auto& edge:mesh.edges) {

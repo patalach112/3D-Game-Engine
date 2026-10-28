@@ -50,7 +50,7 @@ Komendy wersji terminalowej: `add`, `select ID`, `move X Y Z`, `delete`, `save`,
 
 - Sceny z kostkami, kulami, walcami i płaszczyznami 3D.
 - Inspektor z edytowalnymi polami pozycji, obrotu i skali. Kliknij wartość, wpisz liczbę i naciśnij Enter.
-- Własny renderer programowy z perspektywą, rasteryzacją ścian i testem głębokości.
+- Własny renderer programowy z perspektywą, rasteryzacją ścian, testem głębokości i przeciąganiem ścian przez płaszczyznę bliskości — duże obiekty, w których kamera się znajduje, tracą już nie ściany.
 - Siatkę bez wypełnionej podłogi: tło widoku prześwituje pomiędzy liniami. Linie mają poprawioną interpolację głębokości, delikatne wygaszanie i większą odporność na znikanie przy przecięciach.
 - Windowsowy interfejs rysowany do bufora pozaekranowego i odświeżany tylko po zmianie sceny lub okna, by ograniczyć miganie i niepotrzebne obciążenie CPU.
 - Windowsowy, skalowalny interfejs z hierarchią i inspektorem, wyświetlający tekst Unicode w Segoe UI. Główne okno można zmieniać rozmiarem, a szerokość paneli zmienić przez przeciągnięcie separatorów.
