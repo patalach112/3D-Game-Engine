@@ -100,6 +100,7 @@ void add_primitive(engine::PrimitiveType type) {
     g.selected = entity.id;
     g.active_field = -1;
     g.status = L"Dodano obiekt";
+    g.scene_dirty = true;
 }
 
 } // namespace editor

@@ -41,13 +41,15 @@ engine::Vec3 normalized(engine::Vec3 a) {
 }
 
 void update_camera() {
-    const auto& target = app().camera.target;
-    const float cp = std::cos(app().pitch);
-    app().camera.position = {
-        target.x + app().camera_distance * cp * std::sin(app().yaw),
-        target.y + app().camera_distance * std::sin(app().pitch),
-        target.z + app().camera_distance * cp * std::cos(app().yaw)
+    App& g = app();
+    const auto& target = g.camera.target;
+    const float cp = std::cos(g.pitch);
+    g.camera.position = {
+        target.x + g.camera_distance * cp * std::sin(g.yaw),
+        target.y + g.camera_distance * std::sin(g.pitch),
+        target.z + g.camera_distance * cp * std::cos(g.yaw)
     };
+    g.scene_dirty = true;
 }
 
 void update_layout() {
@@ -64,7 +66,12 @@ void update_layout() {
 
     const int view_width = std::max(1, g.width - g.left_width - g.right_width);
     const int view_height = std::max(1, g.height - kHeaderHeight - kFooterHeight);
+    const int old_width = g.renderer.width();
+    const int old_height = g.renderer.height();
     g.renderer.resize(view_width, view_height);
+    if (g.renderer.width() != old_width || g.renderer.height() != old_height) {
+        g.scene_dirty = true;
+    }
 
     const int wanted_font_height = std::clamp(g.height / 55, 15, 17);
     if (wanted_font_height != g.font_height) {
@@ -144,6 +151,7 @@ void commit_field_edit() {
     if (value && end != g.field_input.c_str() && *end == L'\0' && std::isfinite(parsed)) {
         *value = parsed;
         g.status = L"Zmieniono transformację";
+        g.scene_dirty = true;
     } else if (!g.field_input.empty()) {
         g.status = L"Niepoprawna liczba — zmiana odrzucona";
     }
