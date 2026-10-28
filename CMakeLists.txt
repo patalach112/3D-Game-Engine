@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 project(Starter3DEngine VERSION 0.2.0 LANGUAGES CXX)
 
+# Ninja/MinGW is a single-config generator; make a plain configure optimized by default.
+# Otherwise `cmake --build ... --config Release` does not enable optimization there.
+if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

@@ -93,19 +93,64 @@ void SoftwareRenderer::render(const Scene& scene, const EditorCamera& camera, En
         if (x < 0 || x >= width_ || y < 0 || y >= height_) return;
         const auto index = static_cast<std::size_t>(y) * static_cast<std::size_t>(width_)
                          + static_cast<std::size_t>(x);
-        const float tolerance = std::isfinite(depth_[index]) ? std::max(0.0005F, depth_[index] * 0.00001F) : 0.0F;
-        if (!depth_test || z <= depth_[index] + tolerance) {
+        if (!depth_test) {
             pixels_[index] = color;
-            if (depth_test) depth_[index] = std::min(depth_[index], z);
+            return;
+        }
+        if (z < depth_[index]) {
+            pixels_[index] = color;
+            depth_[index] = z;
+            return;
+        }
+        if (std::isfinite(depth_[index])) {
+            const float tolerance = std::max(0.0005F, depth_[index] * 0.00001F);
+            if (z <= depth_[index] + tolerance) pixels_[index] = color;
         }
     };
     const auto draw_line = [&](Vec3 a, Vec3 b, std::uint32_t color, bool depth_test,
                                int thickness, bool fade_with_distance) {
+        // Clip long grid segments at the camera near-plane instead of dropping
+        // the entire line when one endpoint passes behind the camera on zoom.
+        CameraPoint camera_a = to_camera(a, camera, basis);
+        CameraPoint camera_b = to_camera(b, camera, basis);
+        if (camera_a.z < kNearPlane && camera_b.z < kNearPlane) return;
+        const float clip_depth = kNearPlane + 0.002F;
+        if (camera_a.z < clip_depth) {
+            const float t = (clip_depth - camera_a.z) / (camera_b.z - camera_a.z);
+            a = add(a, multiply(subtract(b, a), t));
+        } else if (camera_b.z < clip_depth) {
+            const float t = (clip_depth - camera_a.z) / (camera_b.z - camera_a.z);
+            b = add(a, multiply(subtract(b, a), t));
+        }
         const ScreenPoint pa = project(a), pb = project(b);
         if (!pa.visible || !pb.visible) return;
-        const float dx = pb.x - pa.x, dy = pb.y - pa.y;
-        const float inverse_start = 1.0F / pa.depth;
-        const float inverse_end = 1.0F / pb.depth;
+        const float full_dx = pb.x - pa.x, full_dy = pb.y - pa.y;
+        const float inverse_start_full = 1.0F / pa.depth;
+        const float inverse_end_full = 1.0F / pb.depth;
+        float t_start = 0.0F, t_end = 1.0F;
+        const auto clip_test = [&](float p, float q) {
+            if (std::abs(p) < 1.0e-8F) return q >= 0.0F;
+            const float ratio = q / p;
+            if (p < 0.0F) {
+                if (ratio > t_end) return false;
+                t_start = std::max(t_start, ratio);
+            } else {
+                if (ratio < t_start) return false;
+                t_end = std::min(t_end, ratio);
+            }
+            return true;
+        };
+        if (!clip_test(-full_dx, pa.x) || !clip_test(full_dx, static_cast<float>(width_ - 1) - pa.x)
+            || !clip_test(-full_dy, pa.y) || !clip_test(full_dy, static_cast<float>(height_ - 1) - pa.y)
+            || t_start > t_end) return;
+        const auto at = [&](float t) {
+            const float inverse_depth = inverse_start_full + (inverse_end_full - inverse_start_full) * t;
+            return ScreenPoint{pa.x + full_dx * t, pa.y + full_dy * t, 1.0F / inverse_depth, true};
+        };
+        const ScreenPoint clipped_a = at(t_start), clipped_b = at(t_end);
+        const float dx = clipped_b.x - clipped_a.x, dy = clipped_b.y - clipped_a.y;
+        const float inverse_start = 1.0F / clipped_a.depth;
+        const float inverse_end = 1.0F / clipped_b.depth;
         const int steps = std::max(1, static_cast<int>(std::ceil(std::max(std::abs(dx), std::abs(dy)))));
         for (int i = 0; i <= steps; ++i) {
             const float t = static_cast<float>(i) / static_cast<float>(steps);
@@ -123,8 +168,8 @@ void SoftwareRenderer::render(const Scene& scene, const EditorCamera& camera, En
                              | (mix(color, kBackground, 8) << 8U)
                              | mix(color, kBackground, 0);
             }
-            const int px = static_cast<int>(std::lround(pa.x + dx * t));
-            const int py = static_cast<int>(std::lround(pa.y + dy * t));
+            const int px = static_cast<int>(std::lround(clipped_a.x + dx * t));
+            const int py = static_cast<int>(std::lround(clipped_a.y + dy * t));
             for (int oy = 0; oy < thickness; ++oy) for (int ox = 0; ox < thickness; ++ox)
                 put_pixel(px + ox, py + oy, z, sample_color, depth_test);
         }

@@ -41,6 +41,14 @@ int main() {
     assert(background_pixels > 0);
     assert(background_pixels < renderer.pixels().size()); // Grid is drawn, but no opaque floor fills the view.
 
+    const engine::EditorCamera zoomed_camera{{0.0F, 0.05F, 0.22F}, {0.0F, 0.0F, 0.0F}, 55.0F};
+    renderer.render(empty_scene, zoomed_camera, 0);
+    const auto zoomed_grid_pixels = static_cast<std::size_t>(std::count_if(
+        renderer.pixels().begin(), renderer.pixels().end(), [](std::uint32_t pixel) {
+            return pixel != 0x00272729U;
+        }));
+    assert(zoomed_grid_pixels > 0); // Grid segments survive when their far endpoint clips behind the camera.
+
     engine::Scene rendered_scene;
     const auto rendered_id = rendered_scene.create_entity("Visible Cube").id;
     renderer.render(rendered_scene, camera, rendered_id);
