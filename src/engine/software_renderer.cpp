@@ -242,18 +242,27 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
         add(add(basis.forward,multiply(basis.up,-v_tan)),multiply(basis.right,h_tan)),
         add(add(basis.forward,multiply(basis.up,-v_tan)),multiply(basis.right,-h_tan))
     };
+    bool ginit=false;
     float gx0=0,gx1=0,gz0=0,gz1=0;
-    int gc=0;
+    constexpr float kHorizon=500.0F;
     for(const auto& dir:gdirs) {
-        if(dir.y>-0.0001F) continue;
-        const float t=-camera.position.y/dir.y;
-        if(t<0) continue;
-        const Vec3 hit=add(camera.position,multiply(dir,t));
-        if(gc==0){gx0=gx1=hit.x;gz0=gz1=hit.z;}
-        else{gx0=std::min(gx0,hit.x);gx1=std::max(gx1,hit.x);gz0=std::min(gz0,hit.z);gz1=std::max(gz1,hit.z);}
-        ++gc;
+        if(dir.y<=-0.0001F) {
+            // Ray points downward: intersects y=0 at a finite point.
+            const float t=-camera.position.y/dir.y;
+            if(t>0) {
+                const Vec3 hit=add(camera.position,multiply(dir,t));
+                if(!ginit){gx0=gx1=hit.x;gz0=gz1=hit.z;ginit=true;}
+                else{gx0=std::min(gx0,hit.x);gx1=std::max(gx1,hit.x);gz0=std::min(gz0,hit.z);gz1=std::max(gz1,hit.z);}
+            }
+        } else {
+            // Ray points upward: grid extends to horizon in the XZ direction.
+            const float far=camera.position.x+(dir.x>0.01F?kHorizon:(dir.x<-0.01F?-kHorizon:0.0F));
+            const float farz=camera.position.z+(dir.z>0.01F?kHorizon:(dir.z<-0.01F?-kHorizon:0.0F));
+            if(!ginit){gx0=gx1=far;gz0=gz1=farz;ginit=true;}
+            else{gx0=std::min(gx0,far);gx1=std::max(gx1,far);gz0=std::min(gz0,farz);gz1=std::max(gz1,farz);}
+        }
     }
-    if(gc==0||camera.position.y<0.1F){
+    if(!ginit||camera.position.y<0.1F){
         gx0=camera.position.x-10;gx1=camera.position.x+10;
         gz0=camera.position.z-10;gz1=camera.position.z+10;
     }
