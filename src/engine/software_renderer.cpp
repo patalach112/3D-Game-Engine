@@ -115,6 +115,18 @@ MeshData make_primitive_mesh(PrimitiveType type) {
     }
     return mesh;
 }
+
+// Generuje mesh raz na typ primitywny i wykorzystuje go w każdym kadrze.
+// Bez cache po każdym obiekcie tworzone były trzy std::vector na frame.
+const MeshData& primitive_mesh(PrimitiveType type) {
+    static const std::array<MeshData, 4> cache{
+        make_primitive_mesh(PrimitiveType::Cube),
+        make_primitive_mesh(PrimitiveType::Sphere),
+        make_primitive_mesh(PrimitiveType::Cylinder),
+        make_primitive_mesh(PrimitiveType::Plane),
+    };
+    return cache[static_cast<std::size_t>(type)];
+}
 } // namespace
 
 ScreenPoint project_to_screen(Vec3 world,const EditorCamera& camera,int width,int height) {
@@ -231,14 +243,18 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
 
     const Vec3 light=normalize({-0.4F,0.8F,0.55F});
     for(const Entity& entity:scene.entities()) {
-        const MeshData mesh=make_primitive_mesh(entity.primitive);
+        const MeshData& mesh=primitive_mesh(entity.primitive);
         const Vec3 scale=entity.transform.scale;
         const float rx=entity.transform.rotation.x*kPi/180.0F;
         const float ry=entity.transform.rotation.y*kPi/180.0F;
         const float rz=entity.transform.rotation.z*kPi/180.0F;
         const float cx=std::cos(rx),sx=std::sin(rx),cy=std::cos(ry),sy=std::sin(ry),cz=std::cos(rz),sz=std::sin(rz);
-        std::vector<Vec3> world(mesh.vertices.size());
-        std::vector<CameraPoint> camera_space(mesh.vertices.size());
+        static std::vector<Vec3> scratch_world;
+        static std::vector<CameraPoint> scratch_camera;
+        scratch_world.resize(mesh.vertices.size());
+        scratch_camera.resize(mesh.vertices.size());
+        Vec3* world=scratch_world.data();
+        CameraPoint* camera_space=scratch_camera.data();
         for(std::size_t i=0;i<mesh.vertices.size();++i) {
             Vec3 p=mesh.vertices[i]; p={p.x*scale.x,p.y*scale.y,p.z*scale.z};
             const Vec3 px{p.x,p.y*cx-p.z*sx,p.y*sx+p.z*cx};
@@ -252,6 +268,16 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
             entity.primitive==PrimitiveType::Cylinder?0x007DAF82U:
             entity.primitive==PrimitiveType::Plane?0x00B2A27DU:0x00A7A7AAU;
         if(is_selected) base=0x00D8D8DAU;
+
+        // Kulerwanie tylnych ścian trzeba wykluczyć, gdy kamera leży wewnątrz
+        // primitywu — wtedy wszystkie wewnętrzne normalne wskazują na kierunek
+        // kamery i zabiliby cały widok. W tym przypadku zamiast filli ograniczamy
+        // się do rysowania krawędzi i przeskakujemy fill dla trójkąt o
+        // przekraczających znaczną część ekrana.
+        const float max_scale=std::max({scale.x,scale.y,scale.z});
+        const float bounding_radius=0.5F*max_scale;
+        const float camera_dist=length(subtract(camera.position,entity.transform.position));
+        const bool camera_inside=camera_dist<bounding_radius;
 
         // Przeciągamy trójkąty przez płaszczyznę bliskości zamiast ich odrzucać:
         // inaczej duży obiekt, w którym kamera się znajduje, traci każdą ścianę,
@@ -270,6 +296,14 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
             const int max_x=std::min(width_-1,static_cast<int>(std::ceil(std::min(x_max,kLimit))));
             const int min_y=std::max(0,static_cast<int>(std::floor(std::max(y_min,-kLimit))));
             const int max_y=std::min(height_-1,static_cast<int>(std::ceil(std::min(y_max,kLimit))));
+            // Camera inside a huge primitive: triangles cover most of the screen
+            // and their fill dominates the frame time. Skip the fill — edges are
+            // drawn separately and give a useful wireframe for editing.
+            if(camera_inside) {
+                const float bbox=static_cast<float>(max_x-min_x+1)*static_cast<float>(max_y-min_y+1);
+                const float screen=static_cast<float>(width_)*static_cast<float>(height_);
+                if(bbox>screen*0.30F) return;
+            }
             for(int y=min_y;y<=max_y;++y) for(int x=min_x;x<=max_x;++x) {
                 const float px=static_cast<float>(x)+0.5F,py=static_cast<float>(y)+0.5F;
                 const float w0=((p1.x-px)*(p2.y-py)-(p1.y-py)*(p2.x-px))/area;
@@ -284,6 +318,16 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
 
         for(const auto& tri:mesh.triangles) {
             const int ia=tri[0],ib=tri[1],ic=tri[2];
+
+            // Kulerwanie tylnych ścian: normalne meshów wskazują do środka
+            // primitywu, więc trójkąt jest skierowany tyłem do kamery, gdy
+            // dot(normal, to_camera) > 0. Przeskakujemy w ten sposób zarówno
+            // clipping, jak i fill dla połowy ścian zamkniętych primitywów.
+            const Vec3 normal=normalize(cross(subtract(world[static_cast<std::size_t>(ib)],world[static_cast<std::size_t>(ia)]),
+                                               subtract(world[static_cast<std::size_t>(ic)],world[static_cast<std::size_t>(ia)])));
+            const Vec3 to_camera=subtract(camera.position,world[static_cast<std::size_t>(ia)]);
+            if(!camera_inside&&dot(normal,to_camera)>0.0F) continue;
+
             const CameraPoint ca=camera_space[static_cast<std::size_t>(ia)];
             const CameraPoint cb=camera_space[static_cast<std::size_t>(ib)];
             const CameraPoint cc=camera_space[static_cast<std::size_t>(ic)];
@@ -310,8 +354,6 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
             clip_edge(cc,ca);
             if(count<3) continue;
 
-            const Vec3 normal=normalize(cross(subtract(world[static_cast<std::size_t>(ib)],world[static_cast<std::size_t>(ia)]),
-                                               subtract(world[static_cast<std::size_t>(ic)],world[static_cast<std::size_t>(ia)])));
             const std::uint32_t color=shade(base,0.48F+0.52F*std::abs(dot(normal,light)));
 
             std::array<ScreenPoint,6> sp{};
