@@ -1,379 +1,449 @@
-#include "engine/scene/scene.hpp"
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <windowsx.h>
 
-#include <raylib.h>
-#include <raymath.h>
+#include "engine/render/software_renderer.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
+#include <cwchar>
 #include <fstream>
 #include <string>
+#include <vector>
 
 namespace {
-constexpr int kPanelWidth = 238;
-constexpr int kInspectorWidth = 286;
-constexpr int kTopBarHeight = 48;
-constexpr int kSceneListTop = 215;
-constexpr Color kCanvas{42, 42, 44, 255};
-constexpr Color kPanel{29, 29, 30, 255};
-constexpr Color kPanelRaised{36, 36, 37, 255};
-constexpr Color kBorder{55, 55, 57, 255};
-constexpr Color kTextMuted{165, 165, 168, 255};
-constexpr Color kAccent{230, 112, 43, 255};
-constexpr std::array<Vector3, 3> kAxes{{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
-constexpr std::array<Color, 3> kAxisColors{{{230, 73, 67, 255}, {95, 190, 105, 255}, {74, 142, 235, 255}}};
+constexpr int kHeaderHeight = 42;
+constexpr int kFooterHeight = 27;
 
-Font g_font{};
-bool g_custom_font = false;
+struct App {
+    engine::Scene scene;
+    engine::SoftwareRenderer renderer;
+    engine::EditorCamera camera;
+    engine::EntityId selected{};
+    int width{1280};
+    int height{800};
+    int left_width{210};
+    int right_width{270};
+    float yaw{0.75F};
+    float pitch{0.42F};
+    float camera_distance{8.0F};
+    bool orbiting{};
+    POINT last_mouse{};
+    int drag_axis{-1};
+    float drag_sign{1.0F};
+    engine::Vec3 drag_start_position{};
+    engine::Vec3 drag_start_hit{};
+    engine::Vec3 drag_plane_normal{};
+    std::wstring status{L"Gotowe"};
+    std::vector<std::uint32_t> frame;
+    HFONT font{};
+    HFONT bold_font{};
+    int font_height{};
+};
 
-void text(const char* value, float x, float y, float size, Color color = RAYWHITE) {
-    DrawTextEx(g_font, value, {x, y}, size, std::max(0.5F, size * 0.025F), color);
+App g_app;
+
+engine::Vec3 add(engine::Vec3 a, engine::Vec3 b) { return {a.x+b.x, a.y+b.y, a.z+b.z}; }
+engine::Vec3 sub(engine::Vec3 a, engine::Vec3 b) { return {a.x-b.x, a.y-b.y, a.z-b.z}; }
+engine::Vec3 mul(engine::Vec3 a, float n) { return {a.x*n, a.y*n, a.z*n}; }
+float dot(engine::Vec3 a, engine::Vec3 b) { return a.x*b.x+a.y*b.y+a.z*b.z; }
+engine::Vec3 cross(engine::Vec3 a, engine::Vec3 b) {
+    return {a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x};
+}
+float magnitude(engine::Vec3 a) { return std::sqrt(dot(a,a)); }
+engine::Vec3 normalized(engine::Vec3 a) {
+    const float len = magnitude(a);
+    return len < 0.00001F ? engine::Vec3{0,0,1} : mul(a,1.0F/len);
 }
 
-Vector3 to_raylib(const engine::Vec3& value) {
-    return {value.x, value.y, value.z};
+void update_camera() {
+    const auto target = g_app.camera.target;
+    const float cp = std::cos(g_app.pitch);
+    g_app.camera.position = {
+        target.x + g_app.camera_distance * cp * std::sin(g_app.yaw),
+        target.y + g_app.camera_distance * std::sin(g_app.pitch),
+        target.z + g_app.camera_distance * cp * std::cos(g_app.yaw)
+    };
 }
 
-engine::Entity& add_cube(engine::Scene& scene) {
-    auto& cube = scene.create_entity("Cube " + std::to_string(scene.entity_count()));
-    cube.transform.position = {0.0F, 0.5F, 0.0F};
-    return cube;
+void update_layout() {
+    g_app.left_width = std::clamp(g_app.width / 7, 180, 245);
+    g_app.right_width = std::clamp(g_app.width / 5, 245, 315);
+    const int view_width = std::max(1, g_app.width - g_app.left_width - g_app.right_width);
+    const int view_height = std::max(1, g_app.height - kHeaderHeight - kFooterHeight);
+    g_app.renderer.resize(view_width, view_height);
+    const int wanted_font_height = std::clamp(g_app.height / 55, 15, 17);
+    if (wanted_font_height != g_app.font_height) {
+        if (g_app.font) DeleteObject(g_app.font);
+        if (g_app.bold_font) DeleteObject(g_app.bold_font);
+        g_app.font_height = wanted_font_height;
+        g_app.font = CreateFontW(-wanted_font_height,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,
+            DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,
+            DEFAULT_PITCH|FF_DONTCARE,L"Segoe UI");
+        g_app.bold_font = CreateFontW(-wanted_font_height,0,0,0,FW_SEMIBOLD,FALSE,FALSE,FALSE,
+            DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,
+            DEFAULT_PITCH|FF_DONTCARE,L"Segoe UI");
+    }
 }
 
-void save_scene(const engine::Scene& scene) {
+RECT view_rect() {
+    return {g_app.left_width, kHeaderHeight,
+            g_app.width - g_app.right_width, g_app.height - kFooterHeight};
+}
+
+void set_font(HDC dc, bool bold = false) {
+    SelectObject(dc, bold ? g_app.bold_font : g_app.font);
+    SetBkMode(dc, TRANSPARENT);
+}
+
+void fill(HDC dc, RECT rect, COLORREF color) {
+    HBRUSH brush = CreateSolidBrush(color);
+    FillRect(dc, &rect, brush);
+    DeleteObject(brush);
+}
+
+void line(HDC dc, int x1, int y1, int x2, int y2, COLORREF color) {
+    HPEN pen = CreatePen(PS_SOLID, 1, color);
+    HGDIOBJ old = SelectObject(dc, pen);
+    MoveToEx(dc, x1, y1, nullptr);
+    LineTo(dc, x2, y2);
+    SelectObject(dc, old);
+    DeleteObject(pen);
+}
+
+void draw_text(HDC dc, const std::wstring& value, int x, int y, COLORREF color,
+               int max_width = 0, bool bold = false) {
+    set_font(dc, bold);
+    SetTextColor(dc, color);
+    RECT rect{x, y, max_width > 0 ? x + max_width : g_app.width, y + 32};
+    DrawTextW(dc, value.c_str(), static_cast<int>(value.size()), &rect,
+              DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+}
+
+std::wstring number_text(float value, int precision = 2) {
+    wchar_t buffer[32]{};
+    std::swprintf(buffer, 32, L"%.*f", precision, static_cast<double>(value));
+    return buffer;
+}
+
+void draw_button(HDC dc, RECT rect, const wchar_t* caption, bool primary = false) {
+    fill(dc, rect, primary ? RGB(51,51,53) : RGB(43,43,44));
+    line(dc, rect.left, rect.top, rect.right, rect.top, RGB(68,68,70));
+    line(dc, rect.left, rect.bottom-1, rect.right, rect.bottom-1, RGB(20,20,21));
+    draw_text(dc, caption, rect.left + 12, rect.top + 8, RGB(236,236,238), rect.right-rect.left-20);
+}
+
+void draw_ui(HDC dc) {
+    const int w = g_app.width, h = g_app.height;
+    const int right_x = w - g_app.right_width;
+    fill(dc, {0,0,w,kHeaderHeight}, RGB(31,31,32));
+    fill(dc, {0,kHeaderHeight,g_app.left_width,h-kFooterHeight}, RGB(29,29,30));
+    fill(dc, {right_x,kHeaderHeight,w,h-kFooterHeight}, RGB(29,29,30));
+    line(dc,0,kHeaderHeight-1,w,kHeaderHeight-1,RGB(57,57,59));
+    line(dc,g_app.left_width-1,kHeaderHeight,g_app.left_width-1,h-kFooterHeight,RGB(57,57,59));
+    line(dc,right_x,kHeaderHeight,right_x,h-kFooterHeight,RGB(57,57,59));
+
+    fill(dc,{14,10,40,36},RGB(230,112,43));
+    draw_text(dc,L"S",21,13,RGB(255,255,255),20,true);
+    draw_text(dc,L"STARTER",50,13,RGB(246,246,246),90,true);
+    draw_text(dc,L"SCENA",150,14,RGB(238,238,238),70);
+    line(dc,148,kHeaderHeight-2,198,kHeaderHeight-2,RGB(230,112,43));
+    draw_text(dc,L"Własny silnik 3D   •   C++",w-290,14,RGB(177,177,180),270);
+
+    draw_text(dc,L"Hierarchia",14,58,RGB(243,243,243),g_app.left_width-75,true);
+    draw_button(dc,{g_app.left_width-72,54,g_app.left_width-43,84},L"+");
+    draw_button(dc,{g_app.left_width-37,54,g_app.left_width-10,84},L"…");
+    draw_button(dc,{10,96,g_app.left_width-10,134},L"+  Dodaj kostkę",true);
+    draw_button(dc,{10,140,g_app.left_width-10,178},L"Zapisz scenę");
+    draw_text(dc,L"OBIEKTY SCENY",14,190,RGB(165,165,168),g_app.left_width-24);
+
+    int row_y = 216;
+    for (const auto& entity : g_app.scene.entities()) {
+        const bool selected = entity.id == g_app.selected;
+        if (selected) {
+            fill(dc,{6,row_y,g_app.left_width-6,row_y+32},RGB(48,48,49));
+            fill(dc,{6,row_y,9,row_y+32},RGB(230,112,43));
+        }
+        fill(dc,{17,row_y+10,27,row_y+20},selected?RGB(230,180,146):RGB(155,155,158));
+        draw_text(dc,std::wstring(entity.name.begin(),entity.name.end()),36,row_y+7,
+                  selected?RGB(248,248,248):RGB(190,190,193),g_app.left_width-52);
+        row_y += 34;
+    }
+
+    draw_text(dc,L"Inspektor",right_x+15,58,RGB(244,244,244),g_app.right_width-30,true);
+    line(dc,right_x+10,91,w-10,91,RGB(57,57,59));
+    if (const auto* selected = g_app.scene.find_entity(g_app.selected)) {
+        draw_text(dc,std::wstring(selected->name.begin(),selected->name.end()),right_x+15,105,
+                  RGB(230,133,78),g_app.right_width-28,true);
+        fill(dc,{right_x+10,137,w-10,166},RGB(38,38,39));
+        draw_text(dc,L"TRANSFORMACJA",right_x+17,143,RGB(177,177,180),g_app.right_width-34);
+        const auto& t = selected->transform;
+        draw_text(dc,L"Pozycja",right_x+15,176,RGB(165,165,168),58);
+        draw_text(dc,L"X  "+number_text(t.position.x),right_x+74,176,RGB(235,235,236),50);
+        draw_text(dc,L"Y  "+number_text(t.position.y),right_x+128,176,RGB(235,235,236),50);
+        draw_text(dc,L"Z  "+number_text(t.position.z),right_x+182,176,RGB(235,235,236),50);
+        draw_text(dc,L"Obrót",right_x+15,207,RGB(165,165,168),58);
+        draw_text(dc,L"X  "+number_text(t.rotation.x,1),right_x+74,207,RGB(235,235,236),50);
+        draw_text(dc,L"Y  "+number_text(t.rotation.y,1),right_x+128,207,RGB(235,235,236),50);
+        draw_text(dc,L"Z  "+number_text(t.rotation.z,1),right_x+182,207,RGB(235,235,236),50);
+        draw_text(dc,L"Skala",right_x+15,238,RGB(165,165,168),58);
+        draw_text(dc,L"X  "+number_text(t.scale.x),right_x+74,238,RGB(235,235,236),50);
+        draw_text(dc,L"Y  "+number_text(t.scale.y),right_x+128,238,RGB(235,235,236),50);
+        draw_text(dc,L"Z  "+number_text(t.scale.z),right_x+182,238,RGB(235,235,236),50);
+    } else {
+        draw_text(dc,L"Brak zaznaczenia",right_x+15,108,RGB(185,185,188),g_app.right_width-28);
+        draw_text(dc,L"Kliknij obiekt w widoku sceny.",right_x+15,134,RGB(155,155,158),g_app.right_width-28);
+    }
+    fill(dc,{right_x+10,270,w-10,299},RGB(38,38,39));
+    draw_text(dc,L"STEROWANIE",right_x+17,276,RGB(177,177,180),g_app.right_width-34);
+    draw_text(dc,L"Przeciągnij kolorowe uchwyty osi",right_x+15,311,RGB(190,190,193),g_app.right_width-28);
+    draw_text(dc,L"PPM + przeciąganie: obrót kamery",right_x+15,338,RGB(190,190,193),g_app.right_width-28);
+    draw_text(dc,L"Kółko myszy: przybliżenie",right_x+15,365,RGB(190,190,193),g_app.right_width-28);
+    draw_text(dc,L"Delete: usuń zaznaczony obiekt",right_x+15,392,RGB(190,190,193),g_app.right_width-28);
+
+    fill(dc,{0,h-kFooterHeight,w,h},RGB(31,31,32));
+    line(dc,0,h-kFooterHeight,w,h-kFooterHeight,RGB(57,57,59));
+    draw_text(dc,g_app.status+L"   |   Obiektów: "+std::to_wstring(g_app.scene.entity_count()),
+              10,h-kFooterHeight+5,RGB(185,185,188),w-20);
+}
+
+void render_frame(HWND hwnd) {
+    RECT client{};
+    GetClientRect(hwnd,&client);
+    g_app.width = std::max(1L,client.right);
+    g_app.height = std::max(1L,client.bottom);
+    update_layout();
+    update_camera();
+    g_app.renderer.render(g_app.scene,g_app.camera,g_app.selected);
+    const RECT viewport = view_rect();
+    g_app.frame.assign(static_cast<std::size_t>(g_app.width)*static_cast<std::size_t>(g_app.height),0x00272729U);
+    const auto& view = g_app.renderer.pixels();
+    const int vw = viewport.right-viewport.left, vh = viewport.bottom-viewport.top;
+    for (int y=0;y<vh;++y) {
+        const auto src = view.begin()+static_cast<std::ptrdiff_t>(y)*vw;
+        auto dst = g_app.frame.begin()+static_cast<std::ptrdiff_t>(y+viewport.top)*g_app.width+viewport.left;
+        std::copy_n(src,vw,dst);
+    }
+    BITMAPINFO info{};
+    info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth=g_app.width;
+    info.bmiHeader.biHeight=-g_app.height;
+    info.bmiHeader.biPlanes=1;
+    info.bmiHeader.biBitCount=32;
+    info.bmiHeader.biCompression=BI_RGB;
+
+    PAINTSTRUCT ps{};
+    HDC window_dc=BeginPaint(hwnd,&ps);
+    StretchDIBits(window_dc,0,0,g_app.width,g_app.height,0,0,g_app.width,g_app.height,
+                  g_app.frame.data(),&info,DIB_RGB_COLORS,SRCCOPY);
+    draw_ui(window_dc);
+    EndPaint(hwnd,&ps);
+}
+
+void save_scene() {
     std::ofstream file("scene.txt");
-    if (!file) return;
-    file << "# Starter 3D Engine scene v1\n";
-    for (const auto& entity : scene.entities()) {
-        file << entity.id << ' ' << entity.name << ' '
-             << entity.transform.position.x << ' ' << entity.transform.position.y << ' '
-             << entity.transform.position.z << ' ' << entity.transform.rotation.x << ' '
-             << entity.transform.rotation.y << ' ' << entity.transform.rotation.z << ' '
-             << entity.transform.scale.x << ' ' << entity.transform.scale.y << ' '
-             << entity.transform.scale.z << '\n';
+    if (!file) { g_app.status=L"Nie udało się zapisać sceny"; return; }
+    file << "# Starter 3D Engine scene v2\n";
+    for (const auto& e:g_app.scene.entities()) {
+        file<<e.id<<' '<<e.name<<' '<<e.transform.position.x<<' '<<e.transform.position.y<<' '
+            <<e.transform.position.z<<' '<<e.transform.rotation.x<<' '<<e.transform.rotation.y<<' '
+            <<e.transform.rotation.z<<' '<<e.transform.scale.x<<' '<<e.transform.scale.y<<' '
+            <<e.transform.scale.z<<'\n';
     }
+    g_app.status=L"Zapisano scenę do scene.txt";
 }
 
-bool button(Rectangle bounds, const char* caption, bool primary = false) {
-    const bool hovered = CheckCollisionPointRec(GetMousePosition(), bounds);
-    Color fill = primary ? Color{57, 57, 59, 255} : Color{43, 43, 44, 255};
-    if (hovered) fill = primary ? Color{74, 74, 76, 255} : Color{55, 55, 57, 255};
-    DrawRectangleRounded(bounds, 0.12F, 5, fill);
-    DrawRectangleLinesEx(bounds, 1.0F, hovered ? kAccent : kBorder);
-    text(caption, bounds.x + 12, bounds.y + 8, 15, RAYWHITE);
-    return hovered && IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
-}
-
-void section_title(const char* value, int x, int y) {
-    text(value, static_cast<float>(x), static_cast<float>(y), 13, kTextMuted);
-}
-
-void draw_editor_ui(const engine::Scene& scene, const engine::Entity* selected,
-                    bool& add_requested, bool& save_requested) {
-    const int width = GetScreenWidth();
-    const int height = GetScreenHeight();
-    const int right_x = width - kInspectorWidth;
-
-    DrawRectangle(0, 0, width, kTopBarHeight, Color{31, 31, 32, 255});
-    DrawLine(0, kTopBarHeight - 1, width, kTopBarHeight - 1, kBorder);
-    DrawRectangle(13, 12, 24, 24, kAccent);
-    text("S", 19, 14, 17, RAYWHITE);
-    text("STARTER", 47, 14, 16, RAYWHITE);
-    text("SCENA", 143, 17, 13, kTextMuted);
-    DrawLine(143, 43, 189, 43, kAccent);
-    text("Silnik 0.1", static_cast<float>(width - 214), 17, 13, kTextMuted);
-    DrawCircle(width - 177, 23, 2, kBorder);
-    text("Windows", static_cast<float>(width - 162), 17, 13, kTextMuted);
-    DrawCircle(width - 98, 23, 2, kBorder);
-    text("C++", static_cast<float>(width - 83), 17, 13, kTextMuted);
-
-    DrawRectangle(0, kTopBarHeight, kPanelWidth, height - kTopBarHeight, kPanel);
-    DrawRectangle(right_x, kTopBarHeight, kInspectorWidth, height - kTopBarHeight, kPanel);
-    DrawLine(kPanelWidth - 1, kTopBarHeight, kPanelWidth - 1, height, kBorder);
-    DrawLine(right_x, kTopBarHeight, right_x, height, kBorder);
-
-    text("Hierarchia", 17, 65, 17, RAYWHITE);
-    if (button({kPanelWidth - 69.0F, 59, 28, 28}, "+", true)) add_requested = true;
-    if (button({kPanelWidth - 36.0F, 59, 25, 28}, "...")) { }
-    DrawLine(12, 94, kPanelWidth - 12, 94, kBorder);
-    if (button({12, 105, kPanelWidth - 24.0F, 34}, "+  Dodaj kostkę", true)) add_requested = true;
-    if (button({12, 146, kPanelWidth - 24.0F, 34}, "Zapisz scenę")) save_requested = true;
-    section_title("OBIEKTY SCENY", 16, 193);
-
-    int row_y = kSceneListTop;
-    for (const auto& entity : scene.entities()) {
-        const bool is_selected = selected && selected->id == entity.id;
-        const Rectangle row{7, static_cast<float>(row_y), kPanelWidth - 14.0F, 31};
-        if (is_selected) {
-            DrawRectangleRec(row, Color{49, 49, 50, 255});
-            DrawRectangle(static_cast<int>(row.x), static_cast<int>(row.y), 3, static_cast<int>(row.height), kAccent);
-        }
-        DrawRectangle(18, row_y + 10, 10, 10,
-                      is_selected ? Color{190, 190, 192, 255} : kTextMuted);
-        text(entity.name.c_str(), 39, static_cast<float>(row_y + 7), 14,
-             is_selected ? RAYWHITE : kTextMuted);
-        row_y += 33;
-    }
-
-    text("Inspektor", static_cast<float>(right_x + 16), 65, 17, RAYWHITE);
-    DrawLine(right_x + 12, 94, width - 12, 94, kBorder);
-    if (!selected) {
-        text("Brak zaznaczenia", static_cast<float>(right_x + 16), 111, 14, kTextMuted);
-        text("Kliknij obiekt w widoku sceny.", static_cast<float>(right_x + 16), 136, 13, kTextMuted);
-        return;
-    }
-
-    text(selected->name.c_str(), static_cast<float>(right_x + 16), 108, 16, kAccent);
-    const auto& t = selected->transform;
-    DrawRectangleRec({static_cast<float>(right_x + 12), 139, kInspectorWidth - 24.0F, 27}, kPanelRaised);
-    section_title("TRANSFORMACJA", right_x + 20, 146);
-    text(TextFormat("Pozycja    X %5.2f   Y %5.2f   Z %5.2f", t.position.x, t.position.y, t.position.z),
-         static_cast<float>(right_x + 18), 178, 12, RAYWHITE);
-    text(TextFormat("Obrót      X %5.1f   Y %5.1f   Z %5.1f", t.rotation.x, t.rotation.y, t.rotation.z),
-         static_cast<float>(right_x + 18), 201, 12, RAYWHITE);
-    text(TextFormat("Skala      X %5.2f   Y %5.2f   Z %5.2f", t.scale.x, t.scale.y, t.scale.z),
-         static_cast<float>(right_x + 18), 224, 12, RAYWHITE);
-
-    DrawRectangleRec({static_cast<float>(right_x + 12), 257, kInspectorWidth - 24.0F, 27}, kPanelRaised);
-    section_title("NARZĘDZIA", right_x + 20, 264);
-    text("Przesuń kulki osi na obiekcie.", static_cast<float>(right_x + 18), 297, 12, kTextMuted);
-    text("PPM + przeciąganie: obrót kamery", static_cast<float>(right_x + 18), 319, 12, kTextMuted);
-    text("Kółko myszy: przybliżenie", static_cast<float>(right_x + 18), 341, 12, kTextMuted);
-    text("Delete: usuń zaznaczony obiekt", static_cast<float>(right_x + 18), 363, 12, kTextMuted);
-}
-
-void draw_cube(const engine::Entity& entity, bool selected) {
-    const auto& t = entity.transform;
-    const Vector3 position = to_raylib(t.position);
-    const Vector3 size{std::max(0.05F, t.scale.x), std::max(0.05F, t.scale.y), std::max(0.05F, t.scale.z)};
-    DrawCubeV(position, size, selected ? Color{185, 185, 188, 255} : Color{139, 142, 146, 255});
-    DrawCubeWiresV(position, size, selected ? Color{245, 245, 245, 255} : Color{77, 78, 80, 255});
-}
-
-float gizmo_length(float camera_distance) {
-    return std::clamp(camera_distance * 0.13F, 0.85F, 2.3F);
-}
-
-void draw_move_gizmo(const engine::Entity& entity, float camera_distance) {
-    const Vector3 center = to_raylib(entity.transform.position);
-    const float length = gizmo_length(camera_distance);
-    const float radius = std::clamp(length * 0.10F, 0.10F, 0.21F);
-    for (std::size_t axis = 0; axis < kAxes.size(); ++axis) {
-        for (float sign : {-1.0F, 1.0F}) {
-            const Vector3 direction = Vector3Scale(kAxes[axis], sign);
-            const Vector3 handle = Vector3Add(center, Vector3Scale(direction, length));
-            DrawLine3D(center, handle, kAxisColors[axis]);
-            DrawSphere(handle, radius, kAxisColors[axis]);
-        }
-    }
-}
-
-void draw_editor_grid() {
-    constexpr int extent = 24;
-    for (int i = -extent; i <= extent; ++i) {
-        const bool major = (i % 5) == 0;
-        const Color color = major ? Color{82, 82, 84, 255} : Color{59, 59, 61, 255};
-        const float coordinate = static_cast<float>(i);
-        DrawLine3D({-static_cast<float>(extent), -0.025F, coordinate},
-                   {static_cast<float>(extent), -0.025F, coordinate}, color);
-        DrawLine3D({coordinate, -0.025F, -static_cast<float>(extent)},
-                   {coordinate, -0.025F, static_cast<float>(extent)}, color);
-    }
-}
-
-bool ray_plane_hit(const Ray& ray, Vector3 point, Vector3 normal, Vector3& result) {
-    const float denominator = Vector3DotProduct(ray.direction, normal);
-    if (std::abs(denominator) < 1.0e-5F) return false;
-    const float distance = Vector3DotProduct(Vector3Subtract(point, ray.position), normal) / denominator;
-    if (distance < 0.0F) return false;
-    result = Vector3Add(ray.position, Vector3Scale(ray.direction, distance));
+bool ray_plane(engine::Ray3 ray,engine::Vec3 point,engine::Vec3 normal,engine::Vec3& hit) {
+    const float denom=dot(ray.direction,normal);
+    if(std::abs(denom)<0.00001F) return false;
+    const float t=dot(sub(point,ray.origin),normal)/denom;
+    if(t<0) return false;
+    hit=add(ray.origin,mul(ray.direction,t));
     return true;
 }
 
-bool begin_gizmo_drag(const Ray& ray, const engine::Entity& entity, float camera_distance,
-                      int& drag_axis, Vector3& drag_direction, Vector3& plane_normal,
-                      Vector3& initial_hit, engine::Vec3& initial_position, const Camera3D& camera) {
-    const Vector3 center = to_raylib(entity.transform.position);
-    const float length = gizmo_length(camera_distance);
-    const float radius = std::clamp(length * 0.14F, 0.14F, 0.29F);
-    float closest_distance = 1.0e30F;
-    int picked_axis = -1;
-    Vector3 picked_direction{};
+bool ray_box(engine::Ray3 ray,const engine::Entity& entity,float& distance) {
+    float low=0.0F, high=1.0e30F;
+    const float origin[3]{ray.origin.x,ray.origin.y,ray.origin.z};
+    const float direction[3]{ray.direction.x,ray.direction.y,ray.direction.z};
+    const float center[3]{entity.transform.position.x,entity.transform.position.y,entity.transform.position.z};
+    const float half[3]{std::abs(entity.transform.scale.x)*0.5F,std::abs(entity.transform.scale.y)*0.5F,std::abs(entity.transform.scale.z)*0.5F};
+    for(int axis=0;axis<3;++axis) {
+        if(std::abs(direction[axis])<1.0e-7F) {
+            if(origin[axis]<center[axis]-half[axis]||origin[axis]>center[axis]+half[axis]) return false;
+            continue;
+        }
+        float a=(center[axis]-half[axis]-origin[axis])/direction[axis];
+        float b=(center[axis]+half[axis]-origin[axis])/direction[axis];
+        if(a>b) std::swap(a,b);
+        low=std::max(low,a); high=std::min(high,b);
+        if(low>high) return false;
+    }
+    distance=low;
+    return true;
+}
 
-    for (int axis = 0; axis < static_cast<int>(kAxes.size()); ++axis) {
-        for (float sign : {-1.0F, 1.0F}) {
-            const Vector3 direction = Vector3Scale(kAxes[static_cast<std::size_t>(axis)], sign);
-            const Vector3 handle = Vector3Add(center, Vector3Scale(direction, length));
-            const RayCollision hit = GetRayCollisionSphere(ray, handle, radius * 1.35F);
-            if (hit.hit && hit.distance < closest_distance) {
-                closest_distance = hit.distance;
-                picked_axis = axis;
-                picked_direction = direction;
+bool hit_gizmo(int sx,int sy,int view_w,int view_h,engine::Entity& entity) {
+    const float d=magnitude(sub(g_app.camera.position,entity.transform.position));
+    const float handle_len=std::clamp(d*0.13F,0.8F,2.0F);
+    const int radius=std::clamp(view_h/75,8,14)+5;
+    const engine::Vec3 axes[3]{{1,0,0},{0,1,0},{0,0,1}};
+    const auto center=engine::project_to_screen(entity.transform.position,g_app.camera,view_w,view_h);
+    if(!center.visible) return false;
+    float best=static_cast<float>(radius*radius);
+    int chosen=-1; float chosen_sign=1;
+    for(int axis=0;axis<3;++axis) for(float sign:{-1.0F,1.0F}) {
+        const auto p=engine::project_to_screen(add(entity.transform.position,mul(axes[axis],handle_len*sign)),g_app.camera,view_w,view_h);
+        if(!p.visible) continue;
+        const float dx=p.x-static_cast<float>(sx),dy=p.y-static_cast<float>(sy),dist=dx*dx+dy*dy;
+        if(dist<best) {best=dist;chosen=axis;chosen_sign=sign;}
+    }
+    if(chosen<0) return false;
+    g_app.drag_axis=chosen; g_app.drag_sign=chosen_sign;
+    const engine::Vec3 axis=mul(axes[chosen],chosen_sign);
+    auto view=normalized(sub(g_app.camera.target,g_app.camera.position));
+    auto normal=sub(view,mul(axis,dot(view,axis)));
+    if(magnitude(normal)<0.0001F) normal=cross(axis,std::abs(axis.y)<0.9F?engine::Vec3{0,1,0}:engine::Vec3{1,0,0});
+    g_app.drag_plane_normal=normalized(normal);
+    const auto ray=engine::screen_ray(static_cast<float>(sx),static_cast<float>(sy),g_app.camera,view_w,view_h);
+    if(!ray_plane(ray,entity.transform.position,g_app.drag_plane_normal,g_app.drag_start_hit)) {g_app.drag_axis=-1;return false;}
+    g_app.drag_start_position=entity.transform.position;
+    return true;
+}
+
+void add_cube() {
+    auto& cube=g_app.scene.create_entity("Cube "+std::to_string(g_app.scene.entity_count()));
+    cube.transform.position={0.0F,0.5F,0.0F};
+    g_app.selected=cube.id;
+    g_app.status=L"Dodano kostkę";
+}
+
+LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
+    switch(message) {
+    case WM_CREATE:
+        SetTimer(hwnd,1,16,nullptr);
+        return 0;
+    case WM_TIMER:
+        InvalidateRect(hwnd,nullptr,FALSE);
+        return 0;
+    case WM_PAINT:
+        render_frame(hwnd);
+        return 0;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_SIZE:
+        g_app.width=LOWORD(lp); g_app.height=HIWORD(lp);
+        InvalidateRect(hwnd,nullptr,FALSE);
+        return 0;
+    case WM_LBUTTONDOWN: {
+        const int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
+        const int view_w=std::max(1,g_app.width-g_app.left_width-g_app.right_width);
+        const int view_h=std::max(1,g_app.height-kHeaderHeight-kFooterHeight);
+        if(x<g_app.left_width) {
+            if(y>=54&&y<84&&x>=g_app.left_width-72&&x<g_app.left_width-43) add_cube();
+            else if(y>=96&&y<134) add_cube();
+            else if(y>=140&&y<178) save_scene();
+            else if(y>=216) {
+                const int row=(y-216)/34;
+                if(row>=0&&static_cast<std::size_t>(row)<g_app.scene.entity_count())
+                    g_app.selected=g_app.scene.entities()[static_cast<std::size_t>(row)].id;
+            }
+        } else if(x>=g_app.left_width&&x<g_app.width-g_app.right_width&&y>=kHeaderHeight&&y<g_app.height-kFooterHeight) {
+            const int vx=x-g_app.left_width,vy=y-kHeaderHeight;
+            bool dragging=false;
+            if(auto* selected=g_app.scene.find_entity(g_app.selected)) dragging=hit_gizmo(vx,vy,view_w,view_h,*selected);
+            if(!dragging) {
+                const auto ray=engine::screen_ray(static_cast<float>(vx),static_cast<float>(vy),g_app.camera,view_w,view_h);
+                float closest=1.0e30F; engine::EntityId hit=0;
+                for(const auto& entity:g_app.scene.entities()) {float t{};if(ray_box(ray,entity,t)&&t<closest){closest=t;hit=entity.id;}}
+                g_app.selected=hit;
+            }
+            SetCapture(hwnd);
+        }
+        InvalidateRect(hwnd,nullptr,FALSE);
+        return 0;
+    }
+    case WM_LBUTTONUP:
+        g_app.drag_axis=-1;
+        if(GetCapture()==hwnd) ReleaseCapture();
+        return 0;
+    case WM_MOUSEMOVE: {
+        const int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
+        if(g_app.orbiting) {
+            const float dx=static_cast<float>(x-g_app.last_mouse.x),dy=static_cast<float>(y-g_app.last_mouse.y);
+            g_app.yaw-=dx*0.006F;
+            // Upward mouse motion (negative dy) now looks upward.
+            g_app.pitch=std::clamp(g_app.pitch+dy*0.006F,-1.4F,1.4F);
+            g_app.last_mouse={x,y};
+            update_camera();
+        } else if(g_app.drag_axis>=0&&(wp&MK_LBUTTON)) {
+            const int vw=std::max(1,g_app.width-g_app.left_width-g_app.right_width);
+            const int vh=std::max(1,g_app.height-kHeaderHeight-kFooterHeight);
+            const auto ray=engine::screen_ray(static_cast<float>(x-g_app.left_width),static_cast<float>(y-kHeaderHeight),g_app.camera,vw,vh);
+            engine::Vec3 hit{};
+            if(ray_plane(ray,g_app.drag_start_position,g_app.drag_plane_normal,hit)) {
+                const engine::Vec3 axis=mul(g_app.drag_axis==0?engine::Vec3{1,0,0}:g_app.drag_axis==1?engine::Vec3{0,1,0}:engine::Vec3{0,0,1},g_app.drag_sign);
+                const float amount=dot(sub(hit,g_app.drag_start_hit),axis);
+                if(auto* entity=g_app.scene.find_entity(g_app.selected)) entity->transform.position=add(g_app.drag_start_position,mul(axis,amount));
             }
         }
+        InvalidateRect(hwnd,nullptr,FALSE);
+        return 0;
     }
-    if (picked_axis < 0) return false;
-
-    const Vector3 view_direction = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-    Vector3 normal = Vector3Subtract(view_direction,
-        Vector3Scale(picked_direction, Vector3DotProduct(view_direction, picked_direction)));
-    if (Vector3Length(normal) < 1.0e-4F) {
-        const Vector3 fallback = std::abs(picked_direction.y) < 0.9F
-            ? Vector3{0.0F, 1.0F, 0.0F} : Vector3{1.0F, 0.0F, 0.0F};
-        normal = Vector3CrossProduct(picked_direction, fallback);
+    case WM_RBUTTONDOWN: {
+        const int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
+        if(x>=g_app.left_width&&x<g_app.width-g_app.right_width&&y>=kHeaderHeight&&y<g_app.height-kFooterHeight) {
+            g_app.orbiting=true; SetCapture(hwnd);
+            g_app.last_mouse={x,y};
+        }
+        return 0;
     }
-    plane_normal = Vector3Normalize(normal);
-    if (!ray_plane_hit(ray, center, plane_normal, initial_hit)) return false;
-    drag_axis = picked_axis;
-    drag_direction = picked_direction;
-    initial_position = entity.transform.position;
-    return true;
+    case WM_RBUTTONUP:
+        g_app.orbiting=false;
+        if(GetCapture()==hwnd) ReleaseCapture();
+        return 0;
+    case WM_MOUSEWHEEL:
+        g_app.camera_distance=std::clamp(g_app.camera_distance-static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp))/120.0F*0.7F,2.0F,40.0F);
+        update_camera(); InvalidateRect(hwnd,nullptr,FALSE);
+        return 0;
+    case WM_KEYDOWN:
+        if(wp=='N') add_cube();
+        else if(wp==VK_DELETE&&g_app.selected) {
+            (void)g_app.scene.remove_entity(g_app.selected);
+            g_app.selected=g_app.scene.entity_count()?g_app.scene.entities().front().id:0;
+            g_app.status=L"Usunięto obiekt";
+        }
+        InvalidateRect(hwnd,nullptr,FALSE);
+        return 0;
+    case WM_DESTROY:
+        KillTimer(hwnd,1);
+        PostQuitMessage(0);
+        return 0;
+    default: return DefWindowProcW(hwnd,message,wp,lp);
+    }
 }
 } // namespace
 
-int main() {
-    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
-    InitWindow(1280, 800, "Starter 3D Engine");
-    SetWindowMinSize(960, 600);
-    SetTargetFPS(60);
-    SetExitKey(KEY_NULL);
-
-    const std::string font_path = std::string(GetApplicationDirectory()) + "assets/fonts/Inter.ttf";
-    g_font = LoadFontEx(font_path.c_str(), 32, nullptr, 0);
-    g_custom_font = IsFontValid(g_font);
-    if (!g_custom_font) g_font = GetFontDefault();
-    else SetTextureFilter(g_font.texture, TEXTURE_FILTER_BILINEAR);
-
-    engine::Scene scene;
-    auto& starter_cube = add_cube(scene);
-    engine::EntityId selected_id = starter_cube.id;
-
-    float yaw = 0.75F;
-    float pitch = 0.55F;
-    float distance = 8.0F;
-    Camera3D camera{};
-    camera.target = {0.0F, 0.5F, 0.0F};
-    camera.up = {0.0F, 1.0F, 0.0F};
-    camera.fovy = 45.0F;
-    camera.projection = CAMERA_PERSPECTIVE;
-
-    bool add_requested = false;
-    bool save_requested = false;
-    int drag_axis = -1;
-    Vector3 drag_direction{};
-    Vector3 drag_plane_normal{};
-    Vector3 drag_start_hit{};
-    engine::Vec3 drag_start_position{};
-
-    while (!WindowShouldClose()) {
-        const int width = GetScreenWidth();
-        const int height = GetScreenHeight();
-        const int viewport_left = kPanelWidth;
-        const int viewport_right = width - kInspectorWidth;
-        const bool over_viewport = GetMouseX() >= viewport_left && GetMouseX() < viewport_right
-            && GetMouseY() >= kTopBarHeight && GetMouseY() < height - 25;
-
-        if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT) && over_viewport) {
-            const Vector2 delta = GetMouseDelta();
-            yaw -= delta.x * 0.006F;
-            // Mouse-up now moves the camera's view upward, matching common editor controls.
-            pitch = std::clamp(pitch + delta.y * 0.006F, -1.35F, 1.35F);
-        }
-        distance = std::clamp(distance - GetMouseWheelMove() * 0.7F, 2.0F, 35.0F);
-        camera.position = {
-            camera.target.x + distance * std::cos(pitch) * std::sin(yaw),
-            camera.target.y + distance * std::sin(pitch),
-            camera.target.z + distance * std::cos(pitch) * std::cos(yaw)
-        };
-
-        if (IsKeyPressed(KEY_N)) add_requested = true;
-        if (IsKeyPressed(KEY_DELETE) && selected_id != 0 && drag_axis < 0) {
-            (void)scene.remove_entity(selected_id);
-            selected_id = scene.entity_count() == 0 ? 0 : scene.entities().front().id;
-        }
-        if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) drag_axis = -1;
-
-        if (drag_axis >= 0 && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-            if (const engine::Entity* selected = scene.find_entity(selected_id)) {
-                const Ray ray = GetMouseRay(GetMousePosition(), camera);
-                Vector3 current_hit{};
-                if (ray_plane_hit(ray, to_raylib(selected->transform.position), drag_plane_normal, current_hit)) {
-                    const float amount = Vector3DotProduct(Vector3Subtract(current_hit, drag_start_hit), drag_direction);
-                    if (engine::Entity* mutable_selected = scene.find_entity(selected_id)) {
-                        mutable_selected->transform.position = {
-                            drag_start_position.x + drag_direction.x * amount,
-                            drag_start_position.y + drag_direction.y * amount,
-                            drag_start_position.z + drag_direction.z * amount
-                        };
-                    }
-                }
-            }
-        }
-
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && GetMouseX() < kPanelWidth
-            && GetMouseY() >= kSceneListTop) {
-            const int row = (GetMouseY() - kSceneListTop) / 33;
-            if (row >= 0 && static_cast<std::size_t>(row) < scene.entity_count())
-                selected_id = scene.entities()[static_cast<std::size_t>(row)].id;
-        }
-
-        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && over_viewport) {
-            const Ray ray = GetMouseRay(GetMousePosition(), camera);
-            bool started_drag = false;
-            if (const engine::Entity* selected = scene.find_entity(selected_id)) {
-                started_drag = begin_gizmo_drag(ray, *selected, distance, drag_axis, drag_direction,
-                    drag_plane_normal, drag_start_hit, drag_start_position, camera);
-            }
-            if (!started_drag) {
-                float closest = 1.0e30F;
-                engine::EntityId hit_id = 0;
-                for (const auto& entity : scene.entities()) {
-                    const Vector3 p = to_raylib(entity.transform.position);
-                    const Vector3 half{std::max(0.05F, entity.transform.scale.x) * 0.5F,
-                                       std::max(0.05F, entity.transform.scale.y) * 0.5F,
-                                       std::max(0.05F, entity.transform.scale.z) * 0.5F};
-                    const RayCollision hit = GetRayCollisionBox(ray,
-                        {Vector3Subtract(p, half), Vector3Add(p, half)});
-                    if (hit.hit && hit.distance < closest) {
-                        closest = hit.distance;
-                        hit_id = entity.id;
-                    }
-                }
-                selected_id = hit_id;
-            }
-        }
-
-        if (add_requested) {
-            selected_id = add_cube(scene).id;
-            add_requested = false;
-        }
-        if (save_requested) {
-            save_scene(scene);
-            save_requested = false;
-        }
-
-        BeginDrawing();
-        ClearBackground(kCanvas);
-        BeginScissorMode(viewport_left, kTopBarHeight,
-            std::max(1, viewport_right - viewport_left), std::max(1, height - kTopBarHeight - 25));
-        BeginMode3D(camera);
-        DrawPlane({0.0F, -0.03F, 0.0F}, {200.0F, 200.0F}, Color{47, 47, 49, 255});
-        draw_editor_grid();
-        for (const auto& entity : scene.entities()) draw_cube(entity, entity.id == selected_id);
-        if (const engine::Entity* selected = scene.find_entity(selected_id)) draw_move_gizmo(*selected, distance);
-        EndMode3D();
-        EndScissorMode();
-
-        draw_editor_ui(scene, scene.find_entity(selected_id), add_requested, save_requested);
-        DrawRectangle(0, height - 25, width, 25, Color{31, 31, 32, 255});
-        DrawLine(0, height - 25, width, height - 25, kBorder);
-        text(TextFormat("Gotowe  |  Zapis sceny: scene.txt  |  Obiektów: %i", static_cast<int>(scene.entity_count())),
-             12, static_cast<float>(height - 19), 11, kTextMuted);
-        DrawFPS(width - 70, height - 20);
-        EndDrawing();
-    }
-
-    if (g_custom_font) UnloadFont(g_font);
-    CloseWindow();
-    return 0;
+int WINAPI wWinMain(HINSTANCE instance,HINSTANCE, PWSTR,int show) {
+    SetProcessDPIAware();
+    g_app.scene.create_entity("Cube 0").transform.position={0.0F,0.5F,0.0F};
+    g_app.selected=1;
+    update_camera();
+    WNDCLASSEXW wc{};
+    wc.cbSize=sizeof(wc); wc.style=CS_HREDRAW|CS_VREDRAW; wc.lpfnWndProc=window_proc;
+    wc.hInstance=instance; wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);
+    wc.hIcon=LoadIconW(nullptr,IDI_APPLICATION); wc.lpszClassName=L"Starter3DEngineWindow";
+    if(!RegisterClassExW(&wc)) return 1;
+    HWND hwnd=CreateWindowExW(0,wc.lpszClassName,L"Starter 3D Engine",
+        WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1280,800,
+        nullptr,nullptr,instance,nullptr);
+    if(!hwnd) return 1;
+    update_layout();
+    ShowWindow(hwnd,show); UpdateWindow(hwnd);
+    MSG msg{};
+    while(GetMessageW(&msg,nullptr,0,0)>0) {TranslateMessage(&msg);DispatchMessageW(&msg);}
+    if(g_app.font) DeleteObject(g_app.font);
+    if(g_app.bold_font) DeleteObject(g_app.bold_font);
+    return static_cast<int>(msg.wParam);
 }
