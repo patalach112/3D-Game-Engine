@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <vector>
 
 namespace engine {
 namespace {
@@ -12,262 +13,283 @@ constexpr float kNearPlane = 0.08F;
 constexpr std::uint32_t kBackground = 0x00272729U;
 constexpr std::array<std::uint32_t, 3> kAxisColors{0x00E84C4CU, 0x005ACB70U, 0x004E91F2U};
 
-Vec3 add(Vec3 a, Vec3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
-Vec3 subtract(Vec3 a, Vec3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
-Vec3 multiply(Vec3 a, float n) { return {a.x * n, a.y * n, a.z * n}; }
-float dot(Vec3 a, Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-Vec3 cross(Vec3 a, Vec3 b) {
-    return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x};
-}
-float length(Vec3 v) { return std::sqrt(dot(v, v)); }
+Vec3 add(Vec3 a, Vec3 b) { return {a.x+b.x,a.y+b.y,a.z+b.z}; }
+Vec3 subtract(Vec3 a, Vec3 b) { return {a.x-b.x,a.y-b.y,a.z-b.z}; }
+Vec3 multiply(Vec3 a,float n) { return {a.x*n,a.y*n,a.z*n}; }
+float dot(Vec3 a,Vec3 b) { return a.x*b.x+a.y*b.y+a.z*b.z; }
+Vec3 cross(Vec3 a,Vec3 b) { return {a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x}; }
+float length(Vec3 v) { return std::sqrt(dot(v,v)); }
 Vec3 normalize(Vec3 v) {
-    const float magnitude = length(v);
-    return magnitude < 1.0e-6F ? Vec3{0.0F, 0.0F, 1.0F} : multiply(v, 1.0F / magnitude);
+    const float magnitude=length(v);
+    return magnitude<1.0e-6F?Vec3{0,0,1}:multiply(v,1.0F/magnitude);
 }
 
-struct Basis { Vec3 right; Vec3 up; Vec3 forward; };
+struct Basis { Vec3 right,up,forward; };
 Basis camera_basis(const EditorCamera& camera) {
-    const Vec3 forward = normalize(subtract(camera.target, camera.position));
-    const Vec3 right = normalize(cross(forward, {0.0F, 1.0F, 0.0F}));
-    return {right, normalize(cross(right, forward)), forward};
+    const Vec3 forward=normalize(subtract(camera.target,camera.position));
+    const Vec3 right=normalize(cross(forward,{0,1,0}));
+    return {right,normalize(cross(right,forward)),forward};
 }
-
-struct CameraPoint { float x, y, z; };
-CameraPoint to_camera(Vec3 world, const EditorCamera& camera, const Basis& basis) {
-    const Vec3 delta = subtract(world, camera.position);
-    return {dot(delta, basis.right), dot(delta, basis.up), dot(delta, basis.forward)};
+struct CameraPoint { float x,y,z; };
+CameraPoint to_camera(Vec3 world,const EditorCamera& camera,const Basis& basis) {
+    const Vec3 delta=subtract(world,camera.position);
+    return {dot(delta,basis.right),dot(delta,basis.up),dot(delta,basis.forward)};
 }
-
-std::uint32_t shade(std::uint32_t color, float factor) {
-    const auto channel = [color, factor](std::uint32_t shift) {
-        return static_cast<std::uint32_t>(std::clamp(
-            static_cast<int>(((color >> shift) & 0xffU) * factor), 0, 255));
+std::uint32_t shade(std::uint32_t color,float factor) {
+    const auto channel=[color,factor](std::uint32_t shift) {
+        return static_cast<std::uint32_t>(std::clamp(static_cast<int>(((color>>shift)&255U)*factor),0,255));
     };
-    return (channel(16) << 16U) | (channel(8) << 8U) | channel(0);
+    return (channel(16)<<16U)|(channel(8)<<8U)|channel(0);
+}
+
+struct MeshData {
+    std::vector<Vec3> vertices;
+    std::vector<std::array<int,3>> triangles;
+    std::vector<std::array<int,2>> edges;
+};
+
+MeshData make_primitive_mesh(PrimitiveType type) {
+    MeshData mesh;
+    if(type==PrimitiveType::Cube) {
+        for(int i=0;i<8;++i)
+            mesh.vertices.push_back({(i&1)?0.5F:-0.5F,(i&2)?0.5F:-0.5F,(i&4)?0.5F:-0.5F});
+        constexpr std::array<std::array<int,4>,6> faces{{
+            {{0,1,3,2}},{{4,6,7,5}},{{0,4,5,1}},{{2,3,7,6}},{{0,2,6,4}},{{1,5,7,3}}
+        }};
+        for(const auto& f:faces) {
+            mesh.triangles.push_back({f[0],f[1],f[2]});
+            mesh.triangles.push_back({f[0],f[2],f[3]});
+        }
+        mesh.edges={{{0,1}},{{1,3}},{{3,2}},{{2,0}},{{4,5}},{{5,7}},
+                    {{7,6}},{{6,4}},{{0,4}},{{1,5}},{{2,6}},{{3,7}}};
+    } else if(type==PrimitiveType::Plane) {
+        mesh.vertices={{-0.5F,0,-0.5F},{0.5F,0,-0.5F},{0.5F,0,0.5F},{-0.5F,0,0.5F}};
+        mesh.triangles={{{0,1,2}},{{0,2,3}}};
+        mesh.edges={{{0,1}},{{1,2}},{{2,3}},{{3,0}}};
+    } else if(type==PrimitiveType::Cylinder) {
+        constexpr int segments=20;
+        for(int ring=0;ring<2;++ring) for(int i=0;i<segments;++i) {
+            const float angle=2.0F*kPi*static_cast<float>(i)/static_cast<float>(segments);
+            mesh.vertices.push_back({0.5F*std::cos(angle),ring?0.5F:-0.5F,0.5F*std::sin(angle)});
+        }
+        const int bottom_center=static_cast<int>(mesh.vertices.size());
+        mesh.vertices.push_back({0,-0.5F,0});
+        const int top_center=static_cast<int>(mesh.vertices.size());
+        mesh.vertices.push_back({0,0.5F,0});
+        for(int i=0;i<segments;++i) {
+            const int next=(i+1)%segments;
+            mesh.triangles.push_back({i,next,segments+next});
+            mesh.triangles.push_back({i,segments+next,segments+i});
+            mesh.triangles.push_back({bottom_center,next,i});
+            mesh.triangles.push_back({top_center,segments+i,segments+next});
+            mesh.edges.push_back({i,next});
+            mesh.edges.push_back({segments+i,segments+next});
+            mesh.edges.push_back({i,segments+i});
+        }
+    } else {
+        constexpr int segments=16, latitude_steps=8;
+        mesh.vertices.push_back({0,0.5F,0});
+        for(int latitude=1;latitude<latitude_steps;++latitude) {
+            const float phi=kPi*static_cast<float>(latitude)/static_cast<float>(latitude_steps);
+            const float y=0.5F*std::cos(phi),radius=0.5F*std::sin(phi);
+            for(int i=0;i<segments;++i) {
+                const float theta=2.0F*kPi*static_cast<float>(i)/static_cast<float>(segments);
+                mesh.vertices.push_back({radius*std::cos(theta),y,radius*std::sin(theta)});
+            }
+        }
+        const int bottom=static_cast<int>(mesh.vertices.size()),first_ring=1;
+        mesh.vertices.push_back({0,-0.5F,0});
+        for(int i=0;i<segments;++i)
+            mesh.triangles.push_back({0,first_ring+i,first_ring+(i+1)%segments});
+        for(int ring=0;ring<latitude_steps-2;++ring) {
+            const int upper=first_ring+ring*segments,lower=upper+segments;
+            for(int i=0;i<segments;++i) {
+                const int next=(i+1)%segments;
+                mesh.triangles.push_back({upper+i,lower+i,upper+next});
+                mesh.triangles.push_back({upper+next,lower+i,lower+next});
+            }
+        }
+        const int last_ring=first_ring+(latitude_steps-2)*segments;
+        for(int i=0;i<segments;++i)
+            mesh.triangles.push_back({bottom,last_ring+(i+1)%segments,last_ring+i});
+    }
+    return mesh;
 }
 } // namespace
 
-ScreenPoint project_to_screen(Vec3 world, const EditorCamera& camera, int width, int height) {
-    const Basis basis = camera_basis(camera);
-    const CameraPoint point = to_camera(world, camera, basis);
-    if (point.z < kNearPlane || width <= 0 || height <= 0) return {};
-    const float focal = (static_cast<float>(height) * 0.5F) /
-        std::tan(camera.vertical_fov_degrees * kPi / 360.0F);
-    return {static_cast<float>(width) * 0.5F + point.x * focal / point.z,
-            static_cast<float>(height) * 0.5F - point.y * focal / point.z,
-            point.z, true};
+ScreenPoint project_to_screen(Vec3 world,const EditorCamera& camera,int width,int height) {
+    if(width<=0||height<=0) return {};
+    const Basis basis=camera_basis(camera);
+    const CameraPoint p=to_camera(world,camera,basis);
+    if(p.z<kNearPlane) return {};
+    const float focal=(static_cast<float>(height)*0.5F)/std::tan(camera.vertical_fov_degrees*kPi/360.0F);
+    return {static_cast<float>(width)*0.5F+p.x*focal/p.z,
+            static_cast<float>(height)*0.5F-p.y*focal/p.z,p.z,true};
 }
 
-Ray3 screen_ray(float x, float y, const EditorCamera& camera, int width, int height) {
-    const Basis basis = camera_basis(camera);
-    const float tangent = std::tan(camera.vertical_fov_degrees * kPi / 360.0F);
-    const float nx = (2.0F * x / static_cast<float>(std::max(1, width)) - 1.0F)
-        * (static_cast<float>(width) / static_cast<float>(std::max(1, height))) * tangent;
-    const float ny = (1.0F - 2.0F * y / static_cast<float>(std::max(1, height))) * tangent;
-    return {camera.position, normalize(add(basis.forward, add(multiply(basis.right, nx), multiply(basis.up, ny))))};
+Ray3 screen_ray(float x,float y,const EditorCamera& camera,int width,int height) {
+    const Basis basis=camera_basis(camera);
+    const float tangent=std::tan(camera.vertical_fov_degrees*kPi/360.0F);
+    const float nx=(2.0F*x/static_cast<float>(std::max(1,width))-1.0F)
+                  *(static_cast<float>(width)/static_cast<float>(std::max(1,height)))*tangent;
+    const float ny=(1.0F-2.0F*y/static_cast<float>(std::max(1,height)))*tangent;
+    return {camera.position,normalize(add(basis.forward,add(multiply(basis.right,nx),multiply(basis.up,ny))))};
 }
 
-void SoftwareRenderer::resize(int width, int height) {
-    width_ = std::max(1, width);
-    height_ = std::max(1, height);
-    const auto count = static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_);
-    pixels_.resize(count);
-    depth_.resize(count);
+void SoftwareRenderer::resize(int width,int height) {
+    width_=std::max(1,width); height_=std::max(1,height);
+    const auto count=static_cast<std::size_t>(width_)*static_cast<std::size_t>(height_);
+    pixels_.resize(count); depth_.resize(count);
 }
 
-void SoftwareRenderer::render(const Scene& scene, const EditorCamera& camera, EntityId selected) {
-    std::fill(pixels_.begin(), pixels_.end(), kBackground);
-    std::fill(depth_.begin(), depth_.end(), std::numeric_limits<float>::infinity());
-    const Basis basis = camera_basis(camera);
-    const float focal = (static_cast<float>(height_) * 0.5F) /
-        std::tan(camera.vertical_fov_degrees * kPi / 360.0F);
-
-    const auto project = [&](Vec3 world) -> ScreenPoint {
-        const CameraPoint point = to_camera(world, camera, basis);
-        if (point.z < kNearPlane) return {};
-        return {static_cast<float>(width_) * 0.5F + point.x * focal / point.z,
-                static_cast<float>(height_) * 0.5F - point.y * focal / point.z,
-                point.z, true};
+void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,EntityId selected) {
+    std::fill(pixels_.begin(),pixels_.end(),kBackground);
+    std::fill(depth_.begin(),depth_.end(),std::numeric_limits<float>::infinity());
+    const Basis basis=camera_basis(camera);
+    const float focal=(static_cast<float>(height_)*0.5F)/std::tan(camera.vertical_fov_degrees*kPi/360.0F);
+    const auto project=[&](Vec3 world)->ScreenPoint {
+        const CameraPoint p=to_camera(world,camera,basis);
+        if(p.z<kNearPlane) return {};
+        return {static_cast<float>(width_)*0.5F+p.x*focal/p.z,
+                static_cast<float>(height_)*0.5F-p.y*focal/p.z,p.z,true};
     };
-    const auto put_pixel = [&](int x, int y, float z, std::uint32_t color, bool depth_test) {
-        if (x < 0 || x >= width_ || y < 0 || y >= height_) return;
-        const auto index = static_cast<std::size_t>(y) * static_cast<std::size_t>(width_)
-                         + static_cast<std::size_t>(x);
-        if (!depth_test) {
-            pixels_[index] = color;
-            return;
-        }
-        if (z < depth_[index]) {
-            pixels_[index] = color;
-            depth_[index] = z;
-            return;
-        }
-        if (std::isfinite(depth_[index])) {
-            const float tolerance = std::max(0.0005F, depth_[index] * 0.00001F);
-            if (z <= depth_[index] + tolerance) pixels_[index] = color;
+    const auto put_pixel=[&](int x,int y,float z,std::uint32_t color,bool depth_test) {
+        if(x<0||x>=width_||y<0||y>=height_) return;
+        const auto index=static_cast<std::size_t>(y)*static_cast<std::size_t>(width_)+static_cast<std::size_t>(x);
+        if(!depth_test) { pixels_[index]=color; return; }
+        if(z<depth_[index]) { pixels_[index]=color; depth_[index]=z; return; }
+        if(std::isfinite(depth_[index])) {
+            const float tolerance=std::max(0.0005F,depth_[index]*0.00001F);
+            if(z<=depth_[index]+tolerance) pixels_[index]=color;
         }
     };
-    const auto draw_line = [&](Vec3 a, Vec3 b, std::uint32_t color, bool depth_test,
-                               int thickness, bool fade_with_distance) {
-        // Clip long grid segments at the camera near-plane instead of dropping
-        // the entire line when one endpoint passes behind the camera on zoom.
-        CameraPoint camera_a = to_camera(a, camera, basis);
-        CameraPoint camera_b = to_camera(b, camera, basis);
-        if (camera_a.z < kNearPlane && camera_b.z < kNearPlane) return;
-        const float clip_depth = kNearPlane + 0.002F;
-        if (camera_a.z < clip_depth) {
-            const float t = (clip_depth - camera_a.z) / (camera_b.z - camera_a.z);
-            a = add(a, multiply(subtract(b, a), t));
-        } else if (camera_b.z < clip_depth) {
-            const float t = (clip_depth - camera_a.z) / (camera_b.z - camera_a.z);
-            b = add(a, multiply(subtract(b, a), t));
+    const auto draw_line=[&](Vec3 a,Vec3 b,std::uint32_t color,bool depth_test,int thickness,bool fade) {
+        CameraPoint ca=to_camera(a,camera,basis),cb=to_camera(b,camera,basis);
+        if(ca.z<kNearPlane&&cb.z<kNearPlane) return;
+        const float near_clip=kNearPlane+0.002F;
+        if(ca.z<near_clip) {
+            const float t=(near_clip-ca.z)/(cb.z-ca.z);
+            a=add(a,multiply(subtract(b,a),t));
+        } else if(cb.z<near_clip) {
+            const float t=(near_clip-ca.z)/(cb.z-ca.z);
+            b=add(a,multiply(subtract(b,a),t));
         }
-        const ScreenPoint pa = project(a), pb = project(b);
-        if (!pa.visible || !pb.visible) return;
-        const float full_dx = pb.x - pa.x, full_dy = pb.y - pa.y;
-        const float inverse_start_full = 1.0F / pa.depth;
-        const float inverse_end_full = 1.0F / pb.depth;
-        float t_start = 0.0F, t_end = 1.0F;
-        const auto clip_test = [&](float p, float q) {
-            if (std::abs(p) < 1.0e-8F) return q >= 0.0F;
-            const float ratio = q / p;
-            if (p < 0.0F) {
-                if (ratio > t_end) return false;
-                t_start = std::max(t_start, ratio);
-            } else {
-                if (ratio < t_start) return false;
-                t_end = std::min(t_end, ratio);
-            }
+        const ScreenPoint pa=project(a),pb=project(b);
+        if(!pa.visible||!pb.visible) return;
+        const float full_dx=pb.x-pa.x,full_dy=pb.y-pa.y;
+        const float inv_start_full=1.0F/pa.depth,inv_end_full=1.0F/pb.depth;
+        float t0=0.0F,t1=1.0F;
+        const auto clip_test=[&](float p,float q) {
+            if(std::abs(p)<1.0e-8F) return q>=0.0F;
+            const float ratio=q/p;
+            if(p<0.0F) { if(ratio>t1) return false; t0=std::max(t0,ratio); }
+            else { if(ratio<t0) return false; t1=std::min(t1,ratio); }
             return true;
         };
-        if (!clip_test(-full_dx, pa.x) || !clip_test(full_dx, static_cast<float>(width_ - 1) - pa.x)
-            || !clip_test(-full_dy, pa.y) || !clip_test(full_dy, static_cast<float>(height_ - 1) - pa.y)
-            || t_start > t_end) return;
-        const auto at = [&](float t) {
-            const float inverse_depth = inverse_start_full + (inverse_end_full - inverse_start_full) * t;
-            return ScreenPoint{pa.x + full_dx * t, pa.y + full_dy * t, 1.0F / inverse_depth, true};
+        if(!clip_test(-full_dx,pa.x)||!clip_test(full_dx,static_cast<float>(width_-1)-pa.x)
+          ||!clip_test(-full_dy,pa.y)||!clip_test(full_dy,static_cast<float>(height_-1)-pa.y)||t0>t1) return;
+        const auto at=[&](float t) {
+            const float inv=inv_start_full+(inv_end_full-inv_start_full)*t;
+            return ScreenPoint{pa.x+full_dx*t,pa.y+full_dy*t,1.0F/inv,true};
         };
-        const ScreenPoint clipped_a = at(t_start), clipped_b = at(t_end);
-        const float dx = clipped_b.x - clipped_a.x, dy = clipped_b.y - clipped_a.y;
-        const float inverse_start = 1.0F / clipped_a.depth;
-        const float inverse_end = 1.0F / clipped_b.depth;
-        const int steps = std::max(1, static_cast<int>(std::ceil(std::max(std::abs(dx), std::abs(dy)))));
-        for (int i = 0; i <= steps; ++i) {
-            const float t = static_cast<float>(i) / static_cast<float>(steps);
-            const float reciprocal_depth = inverse_start + (inverse_end - inverse_start) * t;
-            const float z = 1.0F / reciprocal_depth;
-            std::uint32_t sample_color = color;
-            if (fade_with_distance) {
-                const float strength = std::clamp(1.0F - std::max(0.0F, z - 12.0F) / 85.0F, 0.42F, 1.0F);
-                const auto mix = [strength](std::uint32_t foreground, std::uint32_t background, int shift) {
-                    const float a = static_cast<float>((foreground >> shift) & 0xffU);
-                    const float b = static_cast<float>((background >> shift) & 0xffU);
-                    return static_cast<std::uint32_t>(a * strength + b * (1.0F - strength));
+        const ScreenPoint first=at(t0),last=at(t1);
+        const float dx=last.x-first.x,dy=last.y-first.y;
+        const float inv_start=1.0F/first.depth,inv_end=1.0F/last.depth;
+        const int steps=std::max(1,static_cast<int>(std::ceil(std::max(std::abs(dx),std::abs(dy)))));
+        for(int i=0;i<=steps;++i) {
+            const float t=static_cast<float>(i)/static_cast<float>(steps);
+            const float z=1.0F/(inv_start+(inv_end-inv_start)*t);
+            std::uint32_t sample=color;
+            if(fade) {
+                const float strength=std::clamp(1.0F-std::max(0.0F,z-12.0F)/85.0F,0.42F,1.0F);
+                const auto mix=[strength](std::uint32_t fg,std::uint32_t bg,int shift) {
+                    return static_cast<std::uint32_t>(((fg>>shift)&255U)*strength+((bg>>shift)&255U)*(1-strength));
                 };
-                sample_color = (mix(color, kBackground, 16) << 16U)
-                             | (mix(color, kBackground, 8) << 8U)
-                             | mix(color, kBackground, 0);
+                sample=(mix(color,kBackground,16)<<16U)|(mix(color,kBackground,8)<<8U)|mix(color,kBackground,0);
             }
-            const int px = static_cast<int>(std::lround(clipped_a.x + dx * t));
-            const int py = static_cast<int>(std::lround(clipped_a.y + dy * t));
-            for (int oy = 0; oy < thickness; ++oy) for (int ox = 0; ox < thickness; ++ox)
-                put_pixel(px + ox, py + oy, z, sample_color, depth_test);
+            const int px=static_cast<int>(std::lround(first.x+dx*t));
+            const int py=static_cast<int>(std::lround(first.y+dy*t));
+            for(int oy=0;oy<thickness;++oy) for(int ox=0;ox<thickness;++ox)
+                put_pixel(px+ox,py+oy,z,sample,depth_test);
         }
     };
 
-    // The floor is intentionally only a grid. There is no filled plane below it.
-    constexpr int grid_extent = 28;
-    for (int i = -grid_extent; i <= grid_extent; ++i) {
-        const std::uint32_t color = (i % 5 == 0) ? 0x00525255U : 0x00373739U;
-        const float coordinate = static_cast<float>(i);
-        draw_line({-static_cast<float>(grid_extent), 0.0F, coordinate},
-                  {static_cast<float>(grid_extent), 0.0F, coordinate}, color, true, 2, true);
-        draw_line({coordinate, 0.0F, -static_cast<float>(grid_extent)},
-                  {coordinate, 0.0F, static_cast<float>(grid_extent)}, color, true, 2, true);
+    // The default ground is a transparent grid: only its lines are rasterized.
+    constexpr int grid_extent=28;
+    for(int i=-grid_extent;i<=grid_extent;++i) {
+        const auto color=(i%5==0)?0x00525255U:0x00373739U;
+        const float coordinate=static_cast<float>(i);
+        draw_line({-static_cast<float>(grid_extent),0,coordinate},{static_cast<float>(grid_extent),0,coordinate},color,true,2,true);
+        draw_line({coordinate,0,-static_cast<float>(grid_extent)},{coordinate,0,static_cast<float>(grid_extent)},color,true,2,true);
     }
 
-    constexpr std::array<std::array<int, 4>, 6> faces{{
-        {{0, 1, 3, 2}}, {{4, 6, 7, 5}}, {{0, 4, 5, 1}},
-        {{2, 3, 7, 6}}, {{0, 2, 6, 4}}, {{1, 5, 7, 3}}
-    }};
-    constexpr std::array<float, 6> lighting{{0.66F, 0.86F, 0.74F, 1.0F, 0.58F, 0.9F}};
-    constexpr std::array<std::array<int, 2>, 12> edges{{
-        {{0,1}}, {{1,3}}, {{3,2}}, {{2,0}}, {{4,5}}, {{5,7}},
-        {{7,6}}, {{6,4}}, {{0,4}}, {{1,5}}, {{2,6}}, {{3,7}}
-    }};
-
-    for (const Entity& entity : scene.entities()) {
-        const Vec3 scale = entity.transform.scale;
-        const float rx = entity.transform.rotation.x * kPi / 180.0F;
-        const float ry = entity.transform.rotation.y * kPi / 180.0F;
-        const float rz = entity.transform.rotation.z * kPi / 180.0F;
-        std::array<Vec3, 8> world{};
-        std::array<ScreenPoint, 8> screen{};
-        for (int i = 0; i < 8; ++i) {
-            Vec3 p{(i & 1) ? 0.5F : -0.5F, (i & 2) ? 0.5F : -0.5F, (i & 4) ? 0.5F : -0.5F};
-            p = {p.x * scale.x, p.y * scale.y, p.z * scale.z};
-            const float cx = std::cos(rx), sx = std::sin(rx);
-            const float cy = std::cos(ry), sy = std::sin(ry);
-            const float cz = std::cos(rz), sz = std::sin(rz);
-            const Vec3 px{p.x, p.y * cx - p.z * sx, p.y * sx + p.z * cx};
-            const Vec3 py{px.x * cy + px.z * sy, px.y, -px.x * sy + px.z * cy};
-            const Vec3 pz{py.x * cz - py.y * sz, py.x * sz + py.y * cz, py.z};
-            world[static_cast<std::size_t>(i)] = add(pz, entity.transform.position);
-            screen[static_cast<std::size_t>(i)] = project(world[static_cast<std::size_t>(i)]);
+    const Vec3 light=normalize({-0.4F,0.8F,0.55F});
+    for(const Entity& entity:scene.entities()) {
+        const MeshData mesh=make_primitive_mesh(entity.primitive);
+        const Vec3 scale=entity.transform.scale;
+        const float rx=entity.transform.rotation.x*kPi/180.0F;
+        const float ry=entity.transform.rotation.y*kPi/180.0F;
+        const float rz=entity.transform.rotation.z*kPi/180.0F;
+        const float cx=std::cos(rx),sx=std::sin(rx),cy=std::cos(ry),sy=std::sin(ry),cz=std::cos(rz),sz=std::sin(rz);
+        std::vector<Vec3> world(mesh.vertices.size());
+        std::vector<ScreenPoint> screen(mesh.vertices.size());
+        for(std::size_t i=0;i<mesh.vertices.size();++i) {
+            Vec3 p=mesh.vertices[i]; p={p.x*scale.x,p.y*scale.y,p.z*scale.z};
+            const Vec3 px{p.x,p.y*cx-p.z*sx,p.y*sx+p.z*cx};
+            const Vec3 py{px.x*cy+px.z*sy,px.y,-px.x*sy+px.z*cy};
+            const Vec3 pz{py.x*cz-py.y*sz,py.x*sz+py.y*cz,py.z};
+            world[i]=add(pz,entity.transform.position); screen[i]=project(world[i]);
         }
-
-        const bool is_selected = entity.id == selected;
-        const std::uint32_t base = is_selected ? 0x00D8D8DAU : 0x00A7A7AAU;
-        for (std::size_t face_index = 0; face_index < faces.size(); ++face_index) {
-            const auto& face = faces[face_index];
-            const ScreenPoint a = screen[static_cast<std::size_t>(face[0])];
-            const ScreenPoint b = screen[static_cast<std::size_t>(face[1])];
-            const ScreenPoint c = screen[static_cast<std::size_t>(face[2])];
-            const ScreenPoint d = screen[static_cast<std::size_t>(face[3])];
-            if (!a.visible || !b.visible || !c.visible || !d.visible) continue;
-            const std::uint32_t color = shade(base, lighting[face_index]);
-            const auto triangle = [&](ScreenPoint p0, ScreenPoint p1, ScreenPoint p2) {
-                const float area = (p1.x - p0.x) * (p2.y - p0.y) - (p1.y - p0.y) * (p2.x - p0.x);
-                if (std::abs(area) < 1.0e-5F) return;
-                const int min_x = std::max(0, static_cast<int>(std::floor(std::min({p0.x, p1.x, p2.x}))));
-                const int max_x = std::min(width_ - 1, static_cast<int>(std::ceil(std::max({p0.x, p1.x, p2.x}))));
-                const int min_y = std::max(0, static_cast<int>(std::floor(std::min({p0.y, p1.y, p2.y}))));
-                const int max_y = std::min(height_ - 1, static_cast<int>(std::ceil(std::max({p0.y, p1.y, p2.y}))));
-                for (int y = min_y; y <= max_y; ++y) for (int x = min_x; x <= max_x; ++x) {
-                    const float px = static_cast<float>(x) + 0.5F, py = static_cast<float>(y) + 0.5F;
-                    const float w0 = ((p1.x - px) * (p2.y - py) - (p1.y - py) * (p2.x - px)) / area;
-                    const float w1 = ((p2.x - px) * (p0.y - py) - (p2.y - py) * (p0.x - px)) / area;
-                    const float w2 = 1.0F - w0 - w1;
-                    if (w0 >= -0.001F && w1 >= -0.001F && w2 >= -0.001F)
-                        put_pixel(x, y, w0 * p0.depth + w1 * p1.depth + w2 * p2.depth, color, true);
-                }
-            };
-            triangle(a, b, c);
-            triangle(a, c, d);
+        const bool is_selected=entity.id==selected;
+        std::uint32_t base=entity.primitive==PrimitiveType::Sphere?0x007FA8D8U:
+            entity.primitive==PrimitiveType::Cylinder?0x007DAF82U:
+            entity.primitive==PrimitiveType::Plane?0x00B2A27DU:0x00A7A7AAU;
+        if(is_selected) base=0x00D8D8DAU;
+        for(const auto& tri:mesh.triangles) {
+            const int ia=tri[0],ib=tri[1],ic=tri[2];
+            const ScreenPoint p0=screen[static_cast<std::size_t>(ia)],p1=screen[static_cast<std::size_t>(ib)],p2=screen[static_cast<std::size_t>(ic)];
+            if(!p0.visible||!p1.visible||!p2.visible) continue;
+            const Vec3 normal=normalize(cross(subtract(world[static_cast<std::size_t>(ib)],world[static_cast<std::size_t>(ia)]),
+                                               subtract(world[static_cast<std::size_t>(ic)],world[static_cast<std::size_t>(ia)])));
+            const std::uint32_t color=shade(base,0.48F+0.52F*std::abs(dot(normal,light)));
+            const float area=(p1.x-p0.x)*(p2.y-p0.y)-(p1.y-p0.y)*(p2.x-p0.x);
+            if(std::abs(area)<1.0e-5F) continue;
+            const int min_x=std::max(0,static_cast<int>(std::floor(std::min({p0.x,p1.x,p2.x}))));
+            const int max_x=std::min(width_-1,static_cast<int>(std::ceil(std::max({p0.x,p1.x,p2.x}))));
+            const int min_y=std::max(0,static_cast<int>(std::floor(std::min({p0.y,p1.y,p2.y}))));
+            const int max_y=std::min(height_-1,static_cast<int>(std::ceil(std::max({p0.y,p1.y,p2.y}))));
+            for(int y=min_y;y<=max_y;++y) for(int x=min_x;x<=max_x;++x) {
+                const float px=static_cast<float>(x)+0.5F,py=static_cast<float>(y)+0.5F;
+                const float w0=((p1.x-px)*(p2.y-py)-(p1.y-py)*(p2.x-px))/area;
+                const float w1=((p2.x-px)*(p0.y-py)-(p2.y-py)*(p0.x-px))/area;
+                const float w2=1.0F-w0-w1;
+                if(w0 < -0.001F||w1 < -0.001F||w2 < -0.001F) continue;
+                const float inv=w0/p0.depth+w1/p1.depth+w2/p2.depth;
+                put_pixel(x,y,1.0F/inv,color,true);
+            }
         }
-        for (const auto& edge : edges) {
-            const std::uint32_t edge_color = is_selected ? 0x00F1A06BU : 0x00555558U;
-            draw_line(world[static_cast<std::size_t>(edge[0])],
-                      world[static_cast<std::size_t>(edge[1])], edge_color, true, 1, false);
+        const bool show_edges=entity.primitive==PrimitiveType::Cube||(is_selected&&entity.primitive!=PrimitiveType::Sphere);
+        if(show_edges) for(const auto& edge:mesh.edges) {
+            draw_line(world[static_cast<std::size_t>(edge[0])],world[static_cast<std::size_t>(edge[1])],
+                      is_selected?0x00F1A06BU:0x00555558U,true,1,false);
         }
     }
 
-    if (const Entity* entity = scene.find_entity(selected)) {
-        const Vec3 center = entity->transform.position;
-        const float distance = length(subtract(camera.position, center));
-        const float handle_length = std::clamp(distance * 0.13F, 0.8F, 2.0F);
-        for (int axis = 0; axis < 3; ++axis) for (float sign : {-1.0F, 1.0F}) {
-            const Vec3 direction = multiply(axis == 0 ? Vec3{1,0,0} : axis == 1 ? Vec3{0,1,0} : Vec3{0,0,1}, sign);
-            const Vec3 handle = add(center, multiply(direction, handle_length));
-            const ScreenPoint a = project(center), b = project(handle);
-            if (!a.visible || !b.visible) continue;
-            draw_line(center, handle, kAxisColors[static_cast<std::size_t>(axis)], false, 1, false);
-            const int radius = std::clamp(static_cast<int>(std::lround(static_cast<float>(height_) * 0.011F)), 7, 12);
-            for (int y = -radius; y <= radius; ++y) for (int x = -radius; x <= radius; ++x)
-                if (x*x + y*y <= radius*radius)
-                    put_pixel(static_cast<int>(std::lround(b.x)) + x,
-                              static_cast<int>(std::lround(b.y)) + y, b.depth,
-                              kAxisColors[static_cast<std::size_t>(axis)], false);
+    if(const Entity* entity=scene.find_entity(selected)) {
+        const Vec3 center=entity->transform.position;
+        const float distance=length(subtract(camera.position,center));
+        const float handle_length=std::clamp(distance*0.13F,0.8F,2.0F);
+        for(int axis=0;axis<3;++axis) for(float sign:{-1.0F,1.0F}) {
+            const Vec3 direction=multiply(axis==0?Vec3{1,0,0}:axis==1?Vec3{0,1,0}:Vec3{0,0,1},sign);
+            const Vec3 handle=add(center,multiply(direction,handle_length));
+            const ScreenPoint b=project(handle);
+            if(!b.visible) continue;
+            draw_line(center,handle,kAxisColors[static_cast<std::size_t>(axis)],false,1,false);
+            const int radius=std::clamp(static_cast<int>(std::lround(static_cast<float>(height_)*0.011F)),7,12);
+            for(int y=-radius;y<=radius;++y) for(int x=-radius;x<=radius;++x)
+                if(x*x+y*y<=radius*radius)
+                    put_pixel(static_cast<int>(std::lround(b.x))+x,static_cast<int>(std::lround(b.y))+y,b.depth,
+                              kAxisColors[static_cast<std::size_t>(axis)],false);
         }
     }
 }

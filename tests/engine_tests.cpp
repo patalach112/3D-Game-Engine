@@ -57,6 +57,20 @@ int main() {
             return pixel != 0x00272729U;
         }));
     assert(rendered_pixels > renderer.pixels().size() / 10);
+
+    engine::Scene primitives;
+    const auto sphere = primitives.create_entity("Sphere", engine::PrimitiveType::Sphere).id;
+    const auto cylinder = primitives.create_entity("Cylinder", engine::PrimitiveType::Cylinder).id;
+    const auto plane = primitives.create_entity("Plane", engine::PrimitiveType::Plane).id;
+    assert(primitives.find_entity(sphere)->primitive == engine::PrimitiveType::Sphere);
+    assert(primitives.find_entity(cylinder)->primitive == engine::PrimitiveType::Cylinder);
+    assert(primitives.find_entity(plane)->primitive == engine::PrimitiveType::Plane);
+    renderer.render(primitives, camera, sphere);
+    const auto primitive_pixels = static_cast<std::size_t>(std::count_if(
+        renderer.pixels().begin(), renderer.pixels().end(), [](std::uint32_t pixel) {
+            return pixel != 0x00272729U;
+        }));
+    assert(primitive_pixels > renderer.pixels().size() / 10);
     assert(engine::project_to_screen({0.0F, 0.0F, 0.0F}, camera, 128, 96).visible);
     return 0;
 }

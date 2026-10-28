@@ -39,6 +39,9 @@ struct App {
     engine::Vec3 drag_start_hit{};
     engine::Vec3 drag_plane_normal{};
     std::wstring status{L"Gotowe"};
+    int active_field{-1};
+    std::wstring field_input;
+    bool replace_field_on_char{true};
     std::vector<std::uint32_t> frame;
     HDC backbuffer_dc{};
     HBITMAP backbuffer_bitmap{};
@@ -107,6 +110,66 @@ RECT view_rect() {
             g_app.width - g_app.right_width, g_app.height - kFooterHeight};
 }
 
+RECT inspector_field_rect(int field) {
+    const int right_x = g_app.width - g_app.right_width;
+    const int gap = 6;
+    const int col_width = (g_app.right_width - 30 - 2 * gap) / 3;
+    const int group = field / 3;
+    const int axis = field % 3;
+    const int top = 194 + group * 63;
+    const int left = right_x + 15 + axis * (col_width + gap);
+    return {left, top, left + col_width, top + 29};
+}
+
+float* inspector_value(int field) {
+    auto* entity = g_app.scene.find_entity(g_app.selected);
+    if (!entity || field < 0 || field >= 9) return nullptr;
+    engine::Vec3* groups[3]{&entity->transform.position, &entity->transform.rotation, &entity->transform.scale};
+    engine::Vec3& group = *groups[field / 3];
+    switch (field % 3) {
+    case 0: return &group.x;
+    case 1: return &group.y;
+    default: return &group.z;
+    }
+}
+
+std::wstring number_text(float value, int precision = 2) {
+    wchar_t buffer[32]{};
+    std::swprintf(buffer, 32, L"%.*f", precision, static_cast<double>(value));
+    return buffer;
+}
+
+void begin_field_edit(int field) {
+    if (!inspector_value(field)) return;
+    g_app.active_field = field;
+    g_app.field_input = number_text(*inspector_value(field));
+    g_app.replace_field_on_char = true;
+}
+
+void commit_field_edit() {
+    if (g_app.active_field < 0) return;
+    float* value = inspector_value(g_app.active_field);
+    wchar_t* end = nullptr;
+    const float parsed = std::wcstof(g_app.field_input.c_str(), &end);
+    if (value && end != g_app.field_input.c_str() && *end == L'\0' && std::isfinite(parsed)) {
+        *value = parsed;
+        g_app.status = L"Zmieniono transformację";
+    } else if (!g_app.field_input.empty()) {
+        g_app.status = L"Niepoprawna liczba — zmiana odrzucona";
+    }
+    g_app.active_field = -1;
+    g_app.field_input.clear();
+}
+
+int field_at(int x, int y) {
+    if (!g_app.scene.find_entity(g_app.selected)) return -1;
+    for (int field = 0; field < 9; ++field) {
+        const RECT rect = inspector_field_rect(field);
+        if (x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom) return field;
+    }
+    return -1;
+}
+
 void set_font(HDC dc, bool bold = false) {
     SelectObject(dc, bold ? g_app.bold_font : g_app.font);
     SetBkMode(dc, TRANSPARENT);
@@ -136,17 +199,56 @@ void draw_text(HDC dc, const std::wstring& value, int x, int y, COLORREF color,
               DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 }
 
-std::wstring number_text(float value, int precision = 2) {
-    wchar_t buffer[32]{};
-    std::swprintf(buffer, 32, L"%.*f", precision, static_cast<double>(value));
-    return buffer;
-}
-
 void draw_button(HDC dc, RECT rect, const wchar_t* caption, bool primary = false) {
     fill(dc, rect, primary ? RGB(51,51,53) : RGB(43,43,44));
     line(dc, rect.left, rect.top, rect.right, rect.top, RGB(68,68,70));
     line(dc, rect.left, rect.bottom-1, rect.right, rect.bottom-1, RGB(20,20,21));
-    draw_text(dc, caption, rect.left + 12, rect.top + 8, RGB(236,236,238), rect.right-rect.left-20);
+    draw_text(dc, caption, rect.left + 8, rect.top + 8, RGB(236,236,238), rect.right-rect.left-14);
+}
+
+void draw_input(HDC dc, int field) {
+    const RECT rect = inspector_field_rect(field);
+    const bool active = g_app.active_field == field;
+    fill(dc, rect, active ? RGB(47,47,49) : RGB(38,38,39));
+    const COLORREF border = active ? RGB(230,112,43) : RGB(74,74,76);
+    line(dc,rect.left,rect.top,rect.right,rect.top,border);
+    line(dc,rect.left,rect.bottom-1,rect.right,rect.bottom-1,border);
+    line(dc,rect.left,rect.top,rect.left,rect.bottom,border);
+    line(dc,rect.right-1,rect.top,rect.right-1,rect.bottom,border);
+    static constexpr wchar_t axis_labels[3]{L'X',L'Y',L'Z'};
+    std::wstring contents;
+    contents.push_back(axis_labels[field % 3]);
+    contents += L" ";
+    contents += active ? g_app.field_input : number_text(*inspector_value(field));
+    draw_text(dc,contents,rect.left+7,rect.top+6,active?RGB(255,230,210):RGB(235,235,236),rect.right-rect.left-12);
+}
+
+void draw_entity_icon(HDC dc, const engine::Entity& entity, int x, int y, COLORREF color) {
+    HBRUSH brush = CreateSolidBrush(color);
+    HBRUSH old = reinterpret_cast<HBRUSH>(SelectObject(dc, brush));
+    HPEN pen = CreatePen(PS_SOLID,1,RGB(20,20,21));
+    HGDIOBJ old_pen = SelectObject(dc,pen);
+    switch(entity.primitive) {
+    case engine::PrimitiveType::Sphere:
+        Ellipse(dc,x,y,x+12,y+12);
+        break;
+    case engine::PrimitiveType::Cylinder:
+        Rectangle(dc,x+1,y+2,x+11,y+11);
+        Ellipse(dc,x+1,y,x+11,y+5);
+        break;
+    case engine::PrimitiveType::Plane:
+        Rectangle(dc,x,y+2,x+12,y+10);
+        line(dc,x+4,y+2,x+4,y+10,RGB(38,38,39));
+        line(dc,x+8,y+2,x+8,y+10,RGB(38,38,39));
+        break;
+    default:
+        Rectangle(dc,x+1,y+1,x+11,y+11);
+        break;
+    }
+    SelectObject(dc,old_pen);
+    SelectObject(dc,old);
+    DeleteObject(pen);
+    DeleteObject(brush);
 }
 
 void draw_ui(HDC dc) {
@@ -174,18 +276,21 @@ void draw_ui(HDC dc) {
     draw_text(dc,L"Hierarchia",14,58,RGB(243,243,243),g_app.left_width-75,true);
     draw_button(dc,{g_app.left_width-72,54,g_app.left_width-43,84},L"+");
     draw_button(dc,{g_app.left_width-37,54,g_app.left_width-10,84},L"…");
-    draw_button(dc,{10,96,g_app.left_width-10,134},L"+  Dodaj kostkę",true);
-    draw_button(dc,{10,140,g_app.left_width-10,178},L"Zapisz scenę");
-    draw_text(dc,L"OBIEKTY SCENY",14,190,RGB(165,165,168),g_app.left_width-24);
+    draw_button(dc,{10,96,g_app.left_width-10,132},L"+ Dodaj kostkę",true);
+    draw_button(dc,{10,137,g_app.left_width-10,173},L"+ Dodaj kulę",true);
+    draw_button(dc,{10,178,g_app.left_width-10,214},L"+ Dodaj walec",true);
+    draw_button(dc,{10,219,g_app.left_width-10,255},L"+ Dodaj płaszczyznę",true);
+    draw_button(dc,{10,260,g_app.left_width-10,298},L"Zapisz scenę");
+    draw_text(dc,L"OBIEKTY SCENY",14,310,RGB(165,165,168),g_app.left_width-24);
 
-    int row_y = 216;
+    int row_y = 336;
     for (const auto& entity : g_app.scene.entities()) {
         const bool selected = entity.id == g_app.selected;
         if (selected) {
             fill(dc,{6,row_y,g_app.left_width-6,row_y+32},RGB(48,48,49));
             fill(dc,{6,row_y,9,row_y+32},RGB(230,112,43));
         }
-        fill(dc,{17,row_y+10,27,row_y+20},selected?RGB(230,180,146):RGB(155,155,158));
+        draw_entity_icon(dc,entity,16,row_y+9,selected?RGB(230,180,146):RGB(155,155,158));
         draw_text(dc,std::wstring(entity.name.begin(),entity.name.end()),36,row_y+7,
                   selected?RGB(248,248,248):RGB(190,190,193),g_app.left_width-52);
         row_y += 34;
@@ -198,52 +303,27 @@ void draw_ui(HDC dc) {
                   RGB(230,133,78),g_app.right_width-28,true);
         fill(dc,{right_x+10,137,w-10,166},RGB(38,38,39));
         draw_text(dc,L"TRANSFORMACJA",right_x+17,143,RGB(177,177,180),g_app.right_width-34);
-        const auto& t = selected->transform;
-        const auto draw_vector = [&](const wchar_t* title, int y, engine::Vec3 value, int precision) {
-            constexpr int label_width = 59;
-            const int column_width = (g_app.right_width - 30 - label_width) / 3;
-            const int values_x = right_x + 15 + label_width;
-            draw_text(dc,title,right_x+15,y,RGB(165,165,168),label_width);
-            draw_text(dc,L"X  "+number_text(value.x,precision),values_x,y,RGB(235,235,236),column_width);
-            draw_text(dc,L"Y  "+number_text(value.y,precision),values_x+column_width,y,RGB(235,235,236),column_width);
-            draw_text(dc,L"Z  "+number_text(value.z,precision),values_x+2*column_width,y,RGB(235,235,236),column_width);
-        };
-        draw_vector(L"Pozycja",176,t.position,2);
-        draw_vector(L"Obrót",207,t.rotation,1);
-        draw_vector(L"Skala",238,t.scale,2);
+        draw_text(dc,L"Pozycja",right_x+15,174,RGB(190,190,193),g_app.right_width-30);
+        draw_input(dc,0); draw_input(dc,1); draw_input(dc,2);
+        draw_text(dc,L"Obrót",right_x+15,237,RGB(190,190,193),g_app.right_width-30);
+        draw_input(dc,3); draw_input(dc,4); draw_input(dc,5);
+        draw_text(dc,L"Skala",right_x+15,300,RGB(190,190,193),g_app.right_width-30);
+        draw_input(dc,6); draw_input(dc,7); draw_input(dc,8);
     } else {
         draw_text(dc,L"Brak zaznaczenia",right_x+15,108,RGB(185,185,188),g_app.right_width-28);
         draw_text(dc,L"Kliknij obiekt w widoku sceny.",right_x+15,134,RGB(155,155,158),g_app.right_width-28);
     }
-    fill(dc,{right_x+10,270,w-10,299},RGB(38,38,39));
-    draw_text(dc,L"STEROWANIE",right_x+17,276,RGB(177,177,180),g_app.right_width-34);
-    draw_text(dc,L"Przeciągnij kolorowe uchwyty osi",right_x+15,311,RGB(190,190,193),g_app.right_width-28);
-    draw_text(dc,L"PPM + przeciąganie: obrót kamery",right_x+15,338,RGB(190,190,193),g_app.right_width-28);
-    draw_text(dc,L"Kółko myszy: przybliżenie",right_x+15,365,RGB(190,190,193),g_app.right_width-28);
-    draw_text(dc,L"Delete: usuń zaznaczony obiekt",right_x+15,392,RGB(190,190,193),g_app.right_width-28);
-    draw_text(dc,L"Przeciągnij separator, by zmienić szerokość panelu.",
-              right_x+15,419,RGB(160,160,163),g_app.right_width-28);
+    fill(dc,{right_x+10,366,w-10,395},RGB(38,38,39));
+    draw_text(dc,L"STEROWANIE",right_x+17,372,RGB(177,177,180),g_app.right_width-34);
+    draw_text(dc,L"Kliknij pole i wpisz wartość; Enter zatwierdza.",right_x+15,407,RGB(190,190,193),g_app.right_width-28);
+    draw_text(dc,L"PPM + przeciąganie: obrót kamery",right_x+15,434,RGB(190,190,193),g_app.right_width-28);
+    draw_text(dc,L"Kółko myszy: przybliżenie",right_x+15,461,RGB(190,190,193),g_app.right_width-28);
+    draw_text(dc,L"Delete: usuń zaznaczony obiekt",right_x+15,488,RGB(190,190,193),g_app.right_width-28);
 
     fill(dc,{0,h-kFooterHeight,w,h},RGB(31,31,32));
     line(dc,0,h-kFooterHeight,w,h-kFooterHeight,RGB(57,57,59));
     draw_text(dc,g_app.status+L"   |   Obiektów: "+std::to_wstring(g_app.scene.entity_count()),
               10,h-kFooterHeight+5,RGB(185,185,188),w-20);
-}
-
-void ensure_backbuffer(HWND hwnd, HDC reference_dc) {
-    if (g_app.backbuffer_dc && g_app.backbuffer_width == g_app.width
-        && g_app.backbuffer_height == g_app.height) return;
-    if (g_app.backbuffer_dc) {
-        if (g_app.backbuffer_previous) SelectObject(g_app.backbuffer_dc, g_app.backbuffer_previous);
-        if (g_app.backbuffer_bitmap) DeleteObject(g_app.backbuffer_bitmap);
-        DeleteDC(g_app.backbuffer_dc);
-    }
-    g_app.backbuffer_dc = CreateCompatibleDC(reference_dc);
-    g_app.backbuffer_bitmap = CreateCompatibleBitmap(reference_dc, g_app.width, g_app.height);
-    g_app.backbuffer_previous = reinterpret_cast<HBITMAP>(SelectObject(g_app.backbuffer_dc, g_app.backbuffer_bitmap));
-    g_app.backbuffer_width = g_app.width;
-    g_app.backbuffer_height = g_app.height;
-    (void)hwnd;
 }
 
 void render_frame(HWND hwnd) {
@@ -284,9 +364,10 @@ void render_frame(HWND hwnd) {
 void save_scene() {
     std::ofstream file("scene.txt");
     if (!file) { g_app.status=L"Nie udało się zapisać sceny"; return; }
-    file << "# Starter 3D Engine scene v2\n";
+    file << "# Starter 3D Engine scene v3 (primitive type follows the name)\n";
     for (const auto& e:g_app.scene.entities()) {
-        file<<e.id<<' '<<e.name<<' '<<e.transform.position.x<<' '<<e.transform.position.y<<' '
+        file<<e.id<<' '<<e.name<<' '<<static_cast<int>(e.primitive)<<' '
+            <<e.transform.position.x<<' '<<e.transform.position.y<<' '
             <<e.transform.position.z<<' '<<e.transform.rotation.x<<' '<<e.transform.rotation.y<<' '
             <<e.transform.rotation.z<<' '<<e.transform.scale.x<<' '<<e.transform.scale.y<<' '
             <<e.transform.scale.z<<'\n';
@@ -352,11 +433,21 @@ bool hit_gizmo(int sx,int sy,int view_w,int view_h,engine::Entity& entity) {
     return true;
 }
 
-void add_cube() {
-    auto& cube=g_app.scene.create_entity("Cube "+std::to_string(g_app.scene.entity_count()));
-    cube.transform.position={0.0F,0.5F,0.0F};
-    g_app.selected=cube.id;
-    g_app.status=L"Dodano kostkę";
+void add_primitive(engine::PrimitiveType type) {
+    const char* name="Cube";
+    switch(type) {
+    case engine::PrimitiveType::Sphere: name="Sphere"; break;
+    case engine::PrimitiveType::Cylinder: name="Cylinder"; break;
+    case engine::PrimitiveType::Plane: name="Plane"; break;
+    default: break;
+    }
+    auto& entity=g_app.scene.create_entity(std::string(name)+" "+std::to_string(g_app.scene.entity_count()),type);
+    const float offset=static_cast<float>(g_app.scene.entity_count()-1)*1.25F;
+    entity.transform.position={offset,type==engine::PrimitiveType::Plane?0.0F:0.5F,0.0F};
+    if(type==engine::PrimitiveType::Plane) entity.transform.scale={3.0F,0.05F,3.0F};
+    g_app.selected=entity.id;
+    g_app.active_field=-1;
+    g_app.status=L"Dodano obiekt";
 }
 
 LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
@@ -393,6 +484,15 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
     case WM_LBUTTONDOWN: {
         const int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
         const int right_x = g_app.width - g_app.right_width;
+        const int clicked_field = field_at(x,y);
+        if (clicked_field >= 0) {
+            if (g_app.active_field >= 0) commit_field_edit();
+            begin_field_edit(clicked_field);
+            SetFocus(hwnd);
+            InvalidateRect(hwnd,nullptr,FALSE);
+            return 0;
+        }
+        if (g_app.active_field >= 0) commit_field_edit();
         if (y >= kHeaderHeight && y < g_app.height - kFooterHeight
             && std::abs(x - g_app.left_width) <= 5) {
             g_app.resizing_left_panel = true;
@@ -408,13 +508,19 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
         const int view_w=std::max(1,g_app.width-g_app.left_width-g_app.right_width);
         const int view_h=std::max(1,g_app.height-kHeaderHeight-kFooterHeight);
         if(x<g_app.left_width) {
-            if(y>=54&&y<84&&x>=g_app.left_width-72&&x<g_app.left_width-43) add_cube();
-            else if(y>=96&&y<134) add_cube();
-            else if(y>=140&&y<178) save_scene();
-            else if(y>=216) {
-                const int row=(y-216)/34;
-                if(row>=0&&static_cast<std::size_t>(row)<g_app.scene.entity_count())
+            if(y>=54&&y<84&&x>=g_app.left_width-72&&x<g_app.left_width-43)
+                add_primitive(engine::PrimitiveType::Cube);
+            else if(y>=96&&y<132) add_primitive(engine::PrimitiveType::Cube);
+            else if(y>=137&&y<173) add_primitive(engine::PrimitiveType::Sphere);
+            else if(y>=178&&y<214) add_primitive(engine::PrimitiveType::Cylinder);
+            else if(y>=219&&y<255) add_primitive(engine::PrimitiveType::Plane);
+            else if(y>=260&&y<298) save_scene();
+            else if(y>=336) {
+                const int row=(y-336)/34;
+                if(row>=0&&static_cast<std::size_t>(row)<g_app.scene.entity_count()) {
                     g_app.selected=g_app.scene.entities()[static_cast<std::size_t>(row)].id;
+                    g_app.active_field=-1;
+                }
             }
         } else if(x>=g_app.left_width&&x<g_app.width-g_app.right_width&&y>=kHeaderHeight&&y<g_app.height-kFooterHeight) {
             const int vx=x-g_app.left_width,vy=y-kHeaderHeight;
@@ -491,8 +597,34 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
         g_app.camera_distance=std::clamp(g_app.camera_distance-static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp))/120.0F*0.7F,2.0F,40.0F);
         update_camera(); InvalidateRect(hwnd,nullptr,FALSE);
         return 0;
+    case WM_CHAR:
+        if (g_app.active_field >= 0) {
+            const wchar_t ch = static_cast<wchar_t>(wp);
+            if (ch == L'\r') {
+                commit_field_edit();
+            } else if (ch == L'\b') {
+                if (g_app.replace_field_on_char) g_app.field_input.clear();
+                else if (!g_app.field_input.empty()) g_app.field_input.pop_back();
+                g_app.replace_field_on_char = false;
+            } else if ((ch >= L'0' && ch <= L'9') || ch == L'-' || ch == L'.' || ch == L',') {
+                if (g_app.replace_field_on_char) g_app.field_input.clear();
+                g_app.field_input.push_back(ch == L',' ? L'.' : ch);
+                g_app.replace_field_on_char = false;
+            }
+            InvalidateRect(hwnd,nullptr,FALSE);
+            return 0;
+        }
+        break;
     case WM_KEYDOWN:
-        if(wp=='N') add_cube();
+        if (g_app.active_field >= 0) {
+            if (wp == VK_ESCAPE) {
+                g_app.active_field = -1;
+                g_app.field_input.clear();
+                InvalidateRect(hwnd,nullptr,FALSE);
+            }
+            return 0;
+        }
+        if(wp=='N') add_primitive(engine::PrimitiveType::Cube);
         else if(wp==VK_DELETE&&g_app.selected) {
             (void)g_app.scene.remove_entity(g_app.selected);
             g_app.selected=g_app.scene.entity_count()?g_app.scene.entities().front().id:0;

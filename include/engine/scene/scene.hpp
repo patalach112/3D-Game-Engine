@@ -10,6 +10,13 @@ namespace engine {
 
 using EntityId = std::uint64_t;
 
+enum class PrimitiveType : std::uint8_t {
+    Cube,
+    Sphere,
+    Cylinder,
+    Plane
+};
+
 struct Transform {
     Vec3 position{};
     Vec3 rotation{}; // Kąty Eulera w stopniach.
@@ -19,12 +26,13 @@ struct Transform {
 struct Entity {
     EntityId id{};
     std::string name;
+    PrimitiveType primitive{PrimitiveType::Cube};
     Transform transform{};
 };
 
 class Scene {
 public:
-    [[nodiscard]] Entity& create_entity(std::string name);
+    [[nodiscard]] Entity& create_entity(std::string name, PrimitiveType primitive = PrimitiveType::Cube);
     [[nodiscard]] Entity* find_entity(EntityId id);
     [[nodiscard]] const Entity* find_entity(EntityId id) const;
     [[nodiscard]] bool remove_entity(EntityId id);
