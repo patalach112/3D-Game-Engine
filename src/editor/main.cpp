@@ -37,6 +37,11 @@ struct App {
     engine::Vec3 drag_plane_normal{};
     std::wstring status{L"Gotowe"};
     std::vector<std::uint32_t> frame;
+    HDC backbuffer_dc{};
+    HBITMAP backbuffer_bitmap{};
+    HBITMAP backbuffer_previous{};
+    int backbuffer_width{};
+    int backbuffer_height{};
     HFONT font{};
     HFONT bold_font{};
     int font_height{};
@@ -208,6 +213,22 @@ void draw_ui(HDC dc) {
               10,h-kFooterHeight+5,RGB(185,185,188),w-20);
 }
 
+void ensure_backbuffer(HWND hwnd, HDC reference_dc) {
+    if (g_app.backbuffer_dc && g_app.backbuffer_width == g_app.width
+        && g_app.backbuffer_height == g_app.height) return;
+    if (g_app.backbuffer_dc) {
+        if (g_app.backbuffer_previous) SelectObject(g_app.backbuffer_dc, g_app.backbuffer_previous);
+        if (g_app.backbuffer_bitmap) DeleteObject(g_app.backbuffer_bitmap);
+        DeleteDC(g_app.backbuffer_dc);
+    }
+    g_app.backbuffer_dc = CreateCompatibleDC(reference_dc);
+    g_app.backbuffer_bitmap = CreateCompatibleBitmap(reference_dc, g_app.width, g_app.height);
+    g_app.backbuffer_previous = reinterpret_cast<HBITMAP>(SelectObject(g_app.backbuffer_dc, g_app.backbuffer_bitmap));
+    g_app.backbuffer_width = g_app.width;
+    g_app.backbuffer_height = g_app.height;
+    (void)hwnd;
+}
+
 void render_frame(HWND hwnd) {
     RECT client{};
     GetClientRect(hwnd,&client);
@@ -235,9 +256,11 @@ void render_frame(HWND hwnd) {
 
     PAINTSTRUCT ps{};
     HDC window_dc=BeginPaint(hwnd,&ps);
-    StretchDIBits(window_dc,0,0,g_app.width,g_app.height,0,0,g_app.width,g_app.height,
+    ensure_backbuffer(hwnd,window_dc);
+    StretchDIBits(g_app.backbuffer_dc,0,0,g_app.width,g_app.height,0,0,g_app.width,g_app.height,
                   g_app.frame.data(),&info,DIB_RGB_COLORS,SRCCOPY);
-    draw_ui(window_dc);
+    draw_ui(g_app.backbuffer_dc);
+    BitBlt(window_dc,0,0,g_app.width,g_app.height,g_app.backbuffer_dc,0,0,SRCCOPY);
     EndPaint(hwnd,&ps);
 }
 
@@ -321,12 +344,6 @@ void add_cube() {
 
 LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
     switch(message) {
-    case WM_CREATE:
-        SetTimer(hwnd,1,16,nullptr);
-        return 0;
-    case WM_TIMER:
-        InvalidateRect(hwnd,nullptr,FALSE);
-        return 0;
     case WM_PAINT:
         render_frame(hwnd);
         return 0;
@@ -417,7 +434,12 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
         InvalidateRect(hwnd,nullptr,FALSE);
         return 0;
     case WM_DESTROY:
-        KillTimer(hwnd,1);
+        if(g_app.backbuffer_dc) {
+            if(g_app.backbuffer_previous) SelectObject(g_app.backbuffer_dc,g_app.backbuffer_previous);
+            if(g_app.backbuffer_bitmap) DeleteObject(g_app.backbuffer_bitmap);
+            DeleteDC(g_app.backbuffer_dc);
+            g_app.backbuffer_dc=nullptr;
+        }
         PostQuitMessage(0);
         return 0;
     default: return DefWindowProcW(hwnd,message,wp,lp);

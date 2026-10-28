@@ -93,21 +93,40 @@ void SoftwareRenderer::render(const Scene& scene, const EditorCamera& camera, En
         if (x < 0 || x >= width_ || y < 0 || y >= height_) return;
         const auto index = static_cast<std::size_t>(y) * static_cast<std::size_t>(width_)
                          + static_cast<std::size_t>(x);
-        if (!depth_test || z < depth_[index]) {
+        const float tolerance = std::isfinite(depth_[index]) ? std::max(0.0005F, depth_[index] * 0.00001F) : 0.0F;
+        if (!depth_test || z <= depth_[index] + tolerance) {
             pixels_[index] = color;
-            if (depth_test) depth_[index] = z;
+            if (depth_test) depth_[index] = std::min(depth_[index], z);
         }
     };
-    const auto draw_line = [&](Vec3 a, Vec3 b, std::uint32_t color, bool depth_test) {
+    const auto draw_line = [&](Vec3 a, Vec3 b, std::uint32_t color, bool depth_test,
+                               int thickness, bool fade_with_distance) {
         const ScreenPoint pa = project(a), pb = project(b);
         if (!pa.visible || !pb.visible) return;
         const float dx = pb.x - pa.x, dy = pb.y - pa.y;
+        const float inverse_start = 1.0F / pa.depth;
+        const float inverse_end = 1.0F / pb.depth;
         const int steps = std::max(1, static_cast<int>(std::ceil(std::max(std::abs(dx), std::abs(dy)))));
         for (int i = 0; i <= steps; ++i) {
             const float t = static_cast<float>(i) / static_cast<float>(steps);
-            put_pixel(static_cast<int>(std::lround(pa.x + dx * t)),
-                      static_cast<int>(std::lround(pa.y + dy * t)),
-                      pa.depth + (pb.depth - pa.depth) * t, color, depth_test);
+            const float reciprocal_depth = inverse_start + (inverse_end - inverse_start) * t;
+            const float z = 1.0F / reciprocal_depth;
+            std::uint32_t sample_color = color;
+            if (fade_with_distance) {
+                const float strength = std::clamp(1.0F - std::max(0.0F, z - 12.0F) / 85.0F, 0.42F, 1.0F);
+                const auto mix = [strength](std::uint32_t foreground, std::uint32_t background, int shift) {
+                    const float a = static_cast<float>((foreground >> shift) & 0xffU);
+                    const float b = static_cast<float>((background >> shift) & 0xffU);
+                    return static_cast<std::uint32_t>(a * strength + b * (1.0F - strength));
+                };
+                sample_color = (mix(color, kBackground, 16) << 16U)
+                             | (mix(color, kBackground, 8) << 8U)
+                             | mix(color, kBackground, 0);
+            }
+            const int px = static_cast<int>(std::lround(pa.x + dx * t));
+            const int py = static_cast<int>(std::lround(pa.y + dy * t));
+            for (int oy = 0; oy < thickness; ++oy) for (int ox = 0; ox < thickness; ++ox)
+                put_pixel(px + ox, py + oy, z, sample_color, depth_test);
         }
     };
 
@@ -117,9 +136,9 @@ void SoftwareRenderer::render(const Scene& scene, const EditorCamera& camera, En
         const std::uint32_t color = (i % 5 == 0) ? 0x00525255U : 0x00373739U;
         const float coordinate = static_cast<float>(i);
         draw_line({-static_cast<float>(grid_extent), 0.0F, coordinate},
-                  {static_cast<float>(grid_extent), 0.0F, coordinate}, color, true);
+                  {static_cast<float>(grid_extent), 0.0F, coordinate}, color, true, 2, true);
         draw_line({coordinate, 0.0F, -static_cast<float>(grid_extent)},
-                  {coordinate, 0.0F, static_cast<float>(grid_extent)}, color, true);
+                  {coordinate, 0.0F, static_cast<float>(grid_extent)}, color, true, 2, true);
     }
 
     constexpr std::array<std::array<int, 4>, 6> faces{{
@@ -184,7 +203,7 @@ void SoftwareRenderer::render(const Scene& scene, const EditorCamera& camera, En
         for (const auto& edge : edges) {
             const std::uint32_t edge_color = is_selected ? 0x00F1A06BU : 0x00555558U;
             draw_line(world[static_cast<std::size_t>(edge[0])],
-                      world[static_cast<std::size_t>(edge[1])], edge_color, true);
+                      world[static_cast<std::size_t>(edge[1])], edge_color, true, 1, false);
         }
     }
 
@@ -197,7 +216,7 @@ void SoftwareRenderer::render(const Scene& scene, const EditorCamera& camera, En
             const Vec3 handle = add(center, multiply(direction, handle_length));
             const ScreenPoint a = project(center), b = project(handle);
             if (!a.visible || !b.visible) continue;
-            draw_line(center, handle, kAxisColors[static_cast<std::size_t>(axis)], false);
+            draw_line(center, handle, kAxisColors[static_cast<std::size_t>(axis)], false, 1, false);
             const int radius = std::clamp(static_cast<int>(std::lround(static_cast<float>(height_) * 0.011F)), 7, 12);
             for (int y = -radius; y <= radius; ++y) for (int x = -radius; x <= radius; ++x)
                 if (x*x + y*y <= radius*radius)

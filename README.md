@@ -34,7 +34,8 @@ Komendy wersji terminalowej: `add`, `select ID`, `move X Y Z`, `delete`, `save`,
 
 - Sceny i obiekty 3D z pozycją, obrotem oraz skalą.
 - Własny renderer programowy z perspektywą, rasteryzacją ścian i testem głębokości.
-- Siatkę bez wypełnionej podłogi: tło widoku prześwituje pomiędzy liniami.
+- Siatkę bez wypełnionej podłogi: tło widoku prześwituje pomiędzy liniami. Linie mają poprawioną interpolację głębokości, delikatne wygaszanie i większą odporność na znikanie przy przecięciach.
+- Windowsowy interfejs rysowany do bufora pozaekranowego i odświeżany tylko po zmianie sceny lub okna, by ograniczyć miganie i niepotrzebne obciążenie CPU.
 - Windowsowy interfejs z hierarchią i inspektorem, wyświetlający tekst Unicode w Segoe UI.
 - Zaznaczanie i przesuwanie obiektów kolorowymi uchwytami osi.
 - Obracanie kamery prawym przyciskiem myszy i przybliżanie kółkiem.
