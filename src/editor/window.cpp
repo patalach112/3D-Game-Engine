@@ -79,6 +79,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp) {
                 if (row >= 0 && static_cast<std::size_t>(row) < g.scene.entity_count()) {
                     g.selected = g.scene.entities()[static_cast<std::size_t>(row)].id;
                     g.active_field = -1;
+                    g.scene_dirty = true;
                 }
             }
         } else if (x >= g.left_width && x < g.width - g.right_width
@@ -96,6 +97,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp) {
                     if (ray_box(ray, entity, t) && t < closest) { closest = t; hit = entity.id; }
                 }
                 g.selected = hit;
+                g.scene_dirty = true; // Zaznaczenie widać w gizmie, więc widok się zmienia.
             }
             SetCapture(hwnd);
         }
@@ -145,6 +147,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp) {
                 if (auto* entity = g.scene.find_entity(g.selected)) {
                     entity->transform.position = add(g.drag_start_position, mul(axis, amount));
                     scene_changed = true;
+                    g.scene_dirty = true;
                 }
             }
         }
@@ -204,6 +207,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp) {
             (void)g.scene.remove_entity(g.selected);
             g.selected = g.scene.entity_count() ? g.scene.entities().front().id : 0;
             g.status = L"Usunięto obiekt";
+            g.scene_dirty = true;
         }
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
@@ -214,12 +218,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp) {
         g.resizing_right_panel = false;
         return 0;
     case WM_DESTROY:
-        if (g.backbuffer_dc) {
-            if (g.backbuffer_previous) SelectObject(g.backbuffer_dc, g.backbuffer_previous);
-            if (g.backbuffer_bitmap) DeleteObject(g.backbuffer_bitmap);
-            DeleteDC(g.backbuffer_dc);
-            g.backbuffer_dc = nullptr;
-        }
+        // Bufor interfejsu sprzątaje release_editor_resources() po cyklu message.
         PostQuitMessage(0);
         return 0;
     default:

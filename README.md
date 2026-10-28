@@ -11,7 +11,7 @@ Własny silnik 3D pisany w C++20. Renderer, rasteryzacja trójkątów, bufor gł
   - `editor_app.hpp` — wspólny typ `App` oraz deklaracje funkcji.
   - `app.cpp` — stan edytora, kamera, layout, pola inspektora.
   - `ui.cpp` — widgety GDI: tekst, przyciski, pola, ikony.
-  - `render.cpp` — rasteryzacja widoku i backbuffer.
+  - `render.cpp` — rasteryzacja widoku i prezentacja obrazu w oknie.
   - `scene_io.cpp` — zapis sceny do `scene.txt`.
   - `interaction.cpp` — strzałka na obiekt, gizmo, dodawanie obiektów.
   - `window.cpp` — procedura okna i klawisze/mouse.
@@ -54,7 +54,11 @@ Komendy wersji terminalowej: `add`, `select ID`, `move X Y Z`, `delete`, `save`,
 - Siatkę bez wypełnionej podłogi: tło widoku prześwituje pomiędzy liniami. Linie mają poprawioną interpolację głębokości, delikatne wygaszanie i większą odporność na znikanie przy przecięciach.
 - Windowsowy interfejs rysowany do bufora pozaekranowego i odświeżany tylko po zmianie sceny lub okna, by ograniczyć miganie i niepotrzebne obciążenie CPU.
 - Windowsowy, skalowalny interfejs z hierarchią i inspektorem, wyświetlający tekst Unicode w Segoe UI. Główne okno można zmieniać rozmiarem, a szerokość paneli zmienić przez przeciągnięcie separatorów.
-- Interfejs rysowany offline i kopowany na krawędzi paneli: zapasowy bufor GDI, cached będące przyciski/pola i pojedynczy tekst paska statusu to wszystko, co odświeżane jest w każdym kadrze. Przyciski, pola i ikony tworzą swoje obiekty GDI tylko raz, a nie przy każdym odwróceniu.
+- Interfejs rysowany offline i kopowany na krawędzi paneli: przyciski, pola i ikony tworzą swoje obiekty GDI
+  tylko raz, a w każdym kadrze powstaje jedna zapasowa warstwa paneli i tekst paska statusu.
+- Scena trafia prosto na DC okna przez `SetDIBitsToDevice`. Stary czas trzymał pełnowymiarowy bufor GDI,
+  potem `StretchDIBits` i `BitBlt` robili po kolejnej kopie. Rasteryzacja jest powtarzana tylko, gdy się
+  zmieni kamera, scena, zaznaczenie lub rozmiar widoku — reszta klatek po prostu pokazuje wcześniejszy obraz.
 - Zaznaczanie i przesuwanie obiektów kolorowymi uchwytami osi.
 - Obracanie kamery prawym przyciskiem myszy i przybliżanie kółkiem.
 - Zapis sceny do `scene.txt`.

@@ -50,13 +50,9 @@ struct App {
     std::wstring field_input;
     bool replace_field_on_char{true};
 
-    std::vector<std::uint32_t> frame;
+    // Zmiana kamery, sceny, zaznaczenia lub rozmiaru widoku wymusza przebudowę.
+    bool scene_dirty{true};
 
-    HDC backbuffer_dc{};
-    HBITMAP backbuffer_bitmap{};
-    HBITMAP backbuffer_previous{};
-    int backbuffer_width{};
-    int backbuffer_height{};
     HFONT font{};
     HFONT bold_font{};
     int font_height{};
@@ -108,13 +104,12 @@ void draw_entity_icon(HDC dc, const engine::Entity& entity, int x, int y, COLORR
 void draw_ui(HDC dc);
 
 // Buduje (lub odświeża) zapisany offline interfejs. source_dc powinien być DC
-// okna lub backbuffera, z którego tworzone są bitmapy kompatybilne.
+// okna, z którego tworzone są bitmapy kompatybilne.
 void ensure_ui_cache(HDC source_dc);
-// Przy zamykaniu aplikacji: usuwa warstwę interfejsu i zapasowy bufor GDI.
+// Przy zamykaniu aplikacji: usuwa zapasową warstwę interfejsu.
 void release_editor_resources();
 
-// Rasterizacja widoku sceny i kopiowanie jej na backbuffer.
-void ensure_backbuffer(HDC window_dc);
+// Rasteryzacja widoku sceny i prezentacja go bezpośrednio w oknie.
 void render_frame(HWND hwnd);
 
 // Scena i rzutowania strzałki na obiekt.
