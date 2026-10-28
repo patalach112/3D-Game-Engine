@@ -517,6 +517,8 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
         return 0;
     default: return DefWindowProcW(hwnd,message,wp,lp);
     }
+    // WM_SETCURSOR can fall through here when the pointer is not over a splitter.
+    return DefWindowProcW(hwnd,message,wp,lp);
 }
 } // namespace
 
