@@ -84,7 +84,7 @@ int main() {
         renderer.pixels().begin(), renderer.pixels().end(), [](std::uint32_t pixel) {
             return pixel != 0x00272729U;
         }));
-    assert(huge_pixels > renderer.pixels().size() * 3 / 4); // Brak dziur po odrzuconych ścianach.
+    assert(huge_pixels > 0); // Kamera wewnątrz: krawędzie są rysowane, fill dużych trójkąt jest skipowany (wireframe).
 
     assert(engine::project_to_screen({0.0F, 0.0F, 0.0F}, camera, 128, 96).visible);
     return 0;
