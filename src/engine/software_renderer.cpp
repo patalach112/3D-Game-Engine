@@ -268,30 +268,31 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
         gx0=camera.position.x-10;gx1=camera.position.x+10;
         gz0=camera.position.z-10;gz1=camera.position.z+10;
     }
-    // Smoother spacing steps reduce visible popping when zooming.
+    // Pick a "nice" grid spacing that keeps at most ~60 lines per direction.
+    // Fractional steps (0.05, 0.1, 0.2...) keep the grid visible when the
+    // camera is very close to the ground; larger steps keep it fast at distance.
     const float gr=std::max(gx1-gx0,gz1-gz0);
-    int step=1;
-    if(gr>50.0F) step=2;
-    if(gr>150.0F) step=5;
-    if(gr>500.0F) step=25;
-    if(gr>1500.0F) step=100;
-    if(gr>5000.0F) step=500;
+    static constexpr float kNiceSteps[]={0.05F,0.1F,0.2F,0.25F,0.5F,1.0F,2.0F,5.0F,10.0F,20.0F,25.0F,50.0F,100.0F,200.0F,250.0F,500.0F};
+    constexpr int kNumSteps=static_cast<int>(sizeof(kNiceSteps)/sizeof(kNiceSteps[0]));
+    const float wanted=gr/60.0F;
+    int step_idx=0;
+    while(step_idx<kNumSteps-1&&kNiceSteps[step_idx]<wanted) ++step_idx;
+    const float step_f=kNiceSteps[step_idx];
     // Line thickness adapts to distance for readability at all zooms.
     int thickness=2;
-    if(gr<150.0F) thickness=3;
+    if(gr<50.0F) thickness=3;
     if(gr>1000.0F) thickness=1;
-    const float margin=20.0F;
-    const int thick=5*step;
-    for(int i=static_cast<int>(std::floor(gx0/step))*step;i<=static_cast<int>(std::ceil(gx1/step))*step;i+=step) {
-        const auto color=(i%thick==0)?0x0068686CU:0x0048484AU;
-        const float c=static_cast<float>(i);
-        draw_line({c,0,gz0-margin},{c,0,gz1+margin},color,true,thickness,true);
-    }
-    for(int i=static_cast<int>(std::floor(gz0/step))*step;i<=static_cast<int>(std::ceil(gz1/step))*step;i+=step) {
-        const auto color=(i%thick==0)?0x0068686CU:0x0048484AU;
-        const float c=static_cast<float>(i);
-        draw_line({gx0-margin,0,c},{gx1+margin,0,c},color,true,thickness,true);
-    }
+    // Thick lines every 5 grid units.
+    // Margin prevents edge gaps; scales down for close-up grids.
+    const float margin=std::min(20.0F,std::max(5.0F,gr*0.3F));
+    const auto line_color=[&](float coord)->std::uint32_t {
+        const int idx=static_cast<int>(std::lround(coord/step_f));
+        return (idx%5==0)?0x0068686CU:0x0048484AU;
+    };
+    for(float i=std::floor(gx0/step_f)*step_f;i<=std::ceil(gx1/step_f)*step_f+0.001F;i+=step_f)
+        draw_line({i,0,gz0-margin},{i,0,gz1+margin},line_color(i),true,thickness,true);
+    for(float i=std::floor(gz0/step_f)*step_f;i<=std::ceil(gz1/step_f)*step_f+0.001F;i+=step_f)
+        draw_line({gx0-margin,0,i},{gx1+margin,0,i},line_color(i),true,thickness,true);
 
     const Vec3 light=normalize({-0.4F,0.8F,0.55F});
     for(const Entity& entity:scene.entities()) {
