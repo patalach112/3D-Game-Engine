@@ -27,6 +27,15 @@ endif()
 
 add_executable(engine_editor src/editor/main.cpp)
 target_link_libraries(engine_editor PRIVATE engine_core raylib)
+if(MSVC)
+    target_compile_options(engine_editor PRIVATE /utf-8)
+endif()
+add_custom_command(TARGET engine_editor POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+        "$<TARGET_FILE_DIR:engine_editor>/assets"
+    COMMENT "Copying editor assets beside the executable"
+)
 
 include(CTest)
 if(BUILD_TESTING)
