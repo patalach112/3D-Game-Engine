@@ -177,7 +177,7 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
         if(!depth_test) { pixels_[index]=color; return; }
         if(z<depth_[index]) { pixels_[index]=color; depth_[index]=z; return; }
         if(std::isfinite(depth_[index])) {
-            const float tolerance=std::max(0.0005F,depth_[index]*0.00001F);
+            const float tolerance=depth_[index]*0.0001F;
             if(z<=depth_[index]+tolerance) pixels_[index]=color;
         }
     };
@@ -232,13 +232,46 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
         }
     };
 
-    // The default ground is a transparent grid: only its lines are rasterized.
-    constexpr int grid_extent=28;
-    for(int i=-grid_extent;i<=grid_extent;++i) {
-        const auto color=(i%5==0)?0x00525255U:0x00373739U;
-        const float coordinate=static_cast<float>(i);
-        draw_line({-static_cast<float>(grid_extent),0,coordinate},{static_cast<float>(grid_extent),0,coordinate},color,true,2,true);
-        draw_line({coordinate,0,-static_cast<float>(grid_extent)},{coordinate,0,static_cast<float>(grid_extent)},color,true,2,true);
+    // Infinite ground grid: extent follows the camera frustum so the grid
+    // is always visible regardless of zoom or camera position.
+    const float v_tan=std::tan(camera.vertical_fov_degrees*kPi/360.0F);
+    const float h_tan=v_tan*static_cast<float>(width_)/static_cast<float>(height_);
+    const Vec3 gdirs[4]={
+        add(add(basis.forward,multiply(basis.up,v_tan)),multiply(basis.right,h_tan)),
+        add(add(basis.forward,multiply(basis.up,v_tan)),multiply(basis.right,-h_tan)),
+        add(add(basis.forward,multiply(basis.up,-v_tan)),multiply(basis.right,h_tan)),
+        add(add(basis.forward,multiply(basis.up,-v_tan)),multiply(basis.right,-h_tan))
+    };
+    float gx0=0,gx1=0,gz0=0,gz1=0;
+    int gc=0;
+    for(const auto& dir:gdirs) {
+        if(dir.y>-0.0001F) continue;
+        const float t=-camera.position.y/dir.y;
+        if(t<0) continue;
+        const Vec3 hit=add(camera.position,multiply(dir,t));
+        if(gc==0){gx0=gx1=hit.x;gz0=gz1=hit.z;}
+        else{gx0=std::min(gx0,hit.x);gx1=std::max(gx1,hit.x);gz0=std::min(gz0,hit.z);gz1=std::max(gz1,hit.z);}
+        ++gc;
+    }
+    if(gc==0||camera.position.y<0.1F){
+        gx0=camera.position.x-10;gx1=camera.position.x+10;
+        gz0=camera.position.z-10;gz1=camera.position.z+10;
+    }
+    const float gr=std::max(gx1-gx0,gz1-gz0);
+    int step=1;
+    if(gr>200.0F) step=10;
+    if(gr>500.0F) step=50;
+    const float margin=20.0F;
+    const int thick=5*step;
+    for(int i=static_cast<int>(std::floor(gx0/step))*step;i<=static_cast<int>(std::ceil(gx1/step))*step;i+=step) {
+        const auto color=(i%thick==0)?0x00525255U:0x00373739U;
+        const float c=static_cast<float>(i);
+        draw_line({c,0,gz0-margin},{c,0,gz1+margin},color,true,2,true);
+    }
+    for(int i=static_cast<int>(std::floor(gz0/step))*step;i<=static_cast<int>(std::ceil(gz1/step))*step;i+=step) {
+        const auto color=(i%thick==0)?0x00525255U:0x00373739U;
+        const float c=static_cast<float>(i);
+        draw_line({gx0-margin,0,c},{gx1+margin,0,c},color,true,2,true);
     }
 
     const Vec3 light=normalize({-0.4F,0.8F,0.55F});

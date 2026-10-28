@@ -107,6 +107,7 @@ void draw_ui(HDC dc);
 // okna, z którego tworzone są bitmapy kompatybilne.
 void ensure_ui_cache(HDC source_dc);
 // Przy zamykaniu aplikacji: usuwa zapasową warstwę interfejsu.
+void release_ui_cache();
 void release_editor_resources();
 
 // Rasteryzacja widoku sceny i prezentacja go bezpośrednio w oknie.
