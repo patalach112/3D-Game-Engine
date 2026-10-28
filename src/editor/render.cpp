@@ -42,8 +42,12 @@ void render_frame(HWND hwnd) {
     info.bmiHeader.biPlanes = 1;
     info.bmiHeader.biBitCount = 32;
     info.bmiHeader.biCompression = BI_RGB;
+    // BiHeight ujemny => DIB jest top-down, a xSrc/ySrc/StartScan/cLines są
+    // ignorowane. SetDIBitsToDevice nie przyjmuje raster op (SRCCOPY to
+    // raster op BitBlt); jej ostatni parametr to ColorUse.
     SetDIBitsToDevice(window_dc, viewport.left, viewport.top, view_width, view_height,
-                      g.renderer.pixels().data(), &info, DIB_RGB_COLORS, SRCCOPY);
+                      0, 0, 0, view_height,
+                      g.renderer.pixels().data(), &info, DIB_RGB_COLORS);
 
     draw_ui(window_dc);
     EndPaint(hwnd, &ps);
