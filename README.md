@@ -19,7 +19,7 @@ W konfiguracji MinGW CMake dodaje `-municode`, aby linker poprawnie użył wejś
 
 ## Linux
 
-Na Linuxie ten sam rdzeń sceny i własny renderer uruchamiają testowy edytor terminalowy. Pokazuje podgląd 3D w terminalu obsługującym kolory true-color i zapisuje pełny obraz do `scene_preview.ppm`. Wersja ta nie wymaga X11 ani zewnętrznych bibliotek graficznych, dzięki czemu może służyć do budowania i testowania renderera również w środowisku bez pulpitu.
+Na Linuxie ten sam rdzeń sceny i własny renderer uruchamiają testowy edytor terminalowy. Pokazuje podgląd 3D w terminalu obsługującym kolory true-color i zapisuje pełny obraz do `scene_preview.ppm`. Wersja ta nie wymaga X11 ani zewnętrznych bibliotek graficznych, dzięki czemu może służyć do budowania i testowania renderera również w środowisku bez pulpitu. Dla generatorów jednokonfiguracyjnych, takich jak Ninja/MinGW, zwykła konfiguracja domyślnie włącza Release z optymalizacją; do debugowania ustaw `-DCMAKE_BUILD_TYPE=Debug`.
 
 ```sh
 cmake -S . -B build -DBUILD_TESTING=ON

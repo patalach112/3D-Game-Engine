@@ -74,7 +74,7 @@ void update_camera() {
 
 void update_layout() {
     g_app.left_width = std::clamp(g_app.width / 7, 180, 245);
-    g_app.right_width = std::clamp(g_app.width / 5, 245, 315);
+    g_app.right_width = std::clamp(g_app.width / 4, 280, 360);
     const int view_width = std::max(1, g_app.width - g_app.left_width - g_app.right_width);
     const int view_height = std::max(1, g_app.height - kHeaderHeight - kFooterHeight);
     g_app.renderer.resize(view_width, view_height);
@@ -154,7 +154,7 @@ void draw_ui(HDC dc) {
     draw_text(dc,L"STARTER",50,13,RGB(246,246,246),90,true);
     draw_text(dc,L"SCENA",150,14,RGB(238,238,238),70);
     line(dc,148,kHeaderHeight-2,198,kHeaderHeight-2,RGB(230,112,43));
-    draw_text(dc,L"Własny silnik 3D   •   C++",w-290,14,RGB(177,177,180),270);
+    draw_text(dc,L"Własny silnik 3D   •   C++",w-g_app.right_width-222,14,RGB(177,177,180),210);
 
     draw_text(dc,L"Hierarchia",14,58,RGB(243,243,243),g_app.left_width-75,true);
     draw_button(dc,{g_app.left_width-72,54,g_app.left_width-43,84},L"+");
@@ -184,18 +184,18 @@ void draw_ui(HDC dc) {
         fill(dc,{right_x+10,137,w-10,166},RGB(38,38,39));
         draw_text(dc,L"TRANSFORMACJA",right_x+17,143,RGB(177,177,180),g_app.right_width-34);
         const auto& t = selected->transform;
-        draw_text(dc,L"Pozycja",right_x+15,176,RGB(165,165,168),58);
-        draw_text(dc,L"X  "+number_text(t.position.x),right_x+74,176,RGB(235,235,236),50);
-        draw_text(dc,L"Y  "+number_text(t.position.y),right_x+128,176,RGB(235,235,236),50);
-        draw_text(dc,L"Z  "+number_text(t.position.z),right_x+182,176,RGB(235,235,236),50);
-        draw_text(dc,L"Obrót",right_x+15,207,RGB(165,165,168),58);
-        draw_text(dc,L"X  "+number_text(t.rotation.x,1),right_x+74,207,RGB(235,235,236),50);
-        draw_text(dc,L"Y  "+number_text(t.rotation.y,1),right_x+128,207,RGB(235,235,236),50);
-        draw_text(dc,L"Z  "+number_text(t.rotation.z,1),right_x+182,207,RGB(235,235,236),50);
-        draw_text(dc,L"Skala",right_x+15,238,RGB(165,165,168),58);
-        draw_text(dc,L"X  "+number_text(t.scale.x),right_x+74,238,RGB(235,235,236),50);
-        draw_text(dc,L"Y  "+number_text(t.scale.y),right_x+128,238,RGB(235,235,236),50);
-        draw_text(dc,L"Z  "+number_text(t.scale.z),right_x+182,238,RGB(235,235,236),50);
+        const auto draw_vector = [&](const wchar_t* title, int y, engine::Vec3 value, int precision) {
+            constexpr int label_width = 59;
+            const int column_width = (g_app.right_width - 30 - label_width) / 3;
+            const int values_x = right_x + 15 + label_width;
+            draw_text(dc,title,right_x+15,y,RGB(165,165,168),label_width);
+            draw_text(dc,L"X  "+number_text(value.x,precision),values_x,y,RGB(235,235,236),column_width);
+            draw_text(dc,L"Y  "+number_text(value.y,precision),values_x+column_width,y,RGB(235,235,236),column_width);
+            draw_text(dc,L"Z  "+number_text(value.z,precision),values_x+2*column_width,y,RGB(235,235,236),column_width);
+        };
+        draw_vector(L"Pozycja",176,t.position,2);
+        draw_vector(L"Obrót",207,t.rotation,1);
+        draw_vector(L"Skala",238,t.scale,2);
     } else {
         draw_text(dc,L"Brak zaznaczenia",right_x+15,108,RGB(185,185,188),g_app.right_width-28);
         draw_text(dc,L"Kliknij obiekt w widoku sceny.",right_x+15,134,RGB(155,155,158),g_app.right_width-28);
@@ -387,6 +387,7 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
         return 0;
     case WM_MOUSEMOVE: {
         const int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
+        bool scene_changed=false;
         if(g_app.orbiting) {
             const float dx=static_cast<float>(x-g_app.last_mouse.x),dy=static_cast<float>(y-g_app.last_mouse.y);
             g_app.yaw-=dx*0.006F;
@@ -394,6 +395,7 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
             g_app.pitch=std::clamp(g_app.pitch+dy*0.006F,-1.4F,1.4F);
             g_app.last_mouse={x,y};
             update_camera();
+            scene_changed=true;
         } else if(g_app.drag_axis>=0&&(wp&MK_LBUTTON)) {
             const int vw=std::max(1,g_app.width-g_app.left_width-g_app.right_width);
             const int vh=std::max(1,g_app.height-kHeaderHeight-kFooterHeight);
@@ -402,10 +404,13 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
             if(ray_plane(ray,g_app.drag_start_position,g_app.drag_plane_normal,hit)) {
                 const engine::Vec3 axis=mul(g_app.drag_axis==0?engine::Vec3{1,0,0}:g_app.drag_axis==1?engine::Vec3{0,1,0}:engine::Vec3{0,0,1},g_app.drag_sign);
                 const float amount=dot(sub(hit,g_app.drag_start_hit),axis);
-                if(auto* entity=g_app.scene.find_entity(g_app.selected)) entity->transform.position=add(g_app.drag_start_position,mul(axis,amount));
+                if(auto* entity=g_app.scene.find_entity(g_app.selected)) {
+                    entity->transform.position=add(g_app.drag_start_position,mul(axis,amount));
+                    scene_changed=true;
+                }
             }
         }
-        InvalidateRect(hwnd,nullptr,FALSE);
+        if(scene_changed) InvalidateRect(hwnd,nullptr,FALSE);
         return 0;
     }
     case WM_RBUTTONDOWN: {
