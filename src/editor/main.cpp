@@ -25,6 +25,9 @@ struct App {
     int height{800};
     int left_width{210};
     int right_width{270};
+    bool layout_initialized{};
+    bool resizing_left_panel{};
+    bool resizing_right_panel{};
     float yaw{0.75F};
     float pitch{0.42F};
     float camera_distance{8.0F};
@@ -73,8 +76,15 @@ void update_camera() {
 }
 
 void update_layout() {
-    g_app.left_width = std::clamp(g_app.width / 7, 180, 245);
-    g_app.right_width = std::clamp(g_app.width / 4, 280, 360);
+    if (!g_app.layout_initialized) {
+        g_app.left_width = std::clamp(g_app.width / 7, 180, 245);
+        g_app.right_width = std::clamp(g_app.width / 4, 280, 360);
+        g_app.layout_initialized = true;
+    }
+    const int max_left = std::max(170, g_app.width - g_app.right_width - 300);
+    g_app.left_width = std::clamp(g_app.left_width, 170, max_left);
+    const int max_right = std::max(240, g_app.width - g_app.left_width - 300);
+    g_app.right_width = std::clamp(g_app.right_width, 240, max_right);
     const int view_width = std::max(1, g_app.width - g_app.left_width - g_app.right_width);
     const int view_height = std::max(1, g_app.height - kHeaderHeight - kFooterHeight);
     g_app.renderer.resize(view_width, view_height);
@@ -146,8 +156,13 @@ void draw_ui(HDC dc) {
     fill(dc, {0,kHeaderHeight,g_app.left_width,h-kFooterHeight}, RGB(29,29,30));
     fill(dc, {right_x,kHeaderHeight,w,h-kFooterHeight}, RGB(29,29,30));
     line(dc,0,kHeaderHeight-1,w,kHeaderHeight-1,RGB(57,57,59));
-    line(dc,g_app.left_width-1,kHeaderHeight,g_app.left_width-1,h-kFooterHeight,RGB(57,57,59));
-    line(dc,right_x,kHeaderHeight,right_x,h-kFooterHeight,RGB(57,57,59));
+    fill(dc,{g_app.left_width-3,kHeaderHeight,g_app.left_width+3,h-kFooterHeight},RGB(34,34,35));
+    fill(dc,{right_x-3,kHeaderHeight,right_x+3,h-kFooterHeight},RGB(34,34,35));
+    const int grip_y = (kHeaderHeight + h - kFooterHeight) / 2;
+    for (int offset=-12; offset<=12; offset+=6) {
+        fill(dc,{g_app.left_width-1,grip_y+offset,g_app.left_width+2,grip_y+offset+2},RGB(104,104,106));
+        fill(dc,{right_x-1,grip_y+offset,right_x+2,grip_y+offset+2},RGB(104,104,106));
+    }
 
     fill(dc,{14,10,40,36},RGB(230,112,43));
     draw_text(dc,L"S",21,13,RGB(255,255,255),20,true);
@@ -206,6 +221,8 @@ void draw_ui(HDC dc) {
     draw_text(dc,L"PPM + przeciąganie: obrót kamery",right_x+15,338,RGB(190,190,193),g_app.right_width-28);
     draw_text(dc,L"Kółko myszy: przybliżenie",right_x+15,365,RGB(190,190,193),g_app.right_width-28);
     draw_text(dc,L"Delete: usuń zaznaczony obiekt",right_x+15,392,RGB(190,190,193),g_app.right_width-28);
+    draw_text(dc,L"Przeciągnij separator, by zmienić szerokość panelu.",
+              right_x+15,419,RGB(160,160,163),g_app.right_width-28);
 
     fill(dc,{0,h-kFooterHeight,w,h},RGB(31,31,32));
     line(dc,0,h-kFooterHeight,w,h-kFooterHeight,RGB(57,57,59));
@@ -349,12 +366,45 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
         return 0;
     case WM_ERASEBKGND:
         return 1;
+    case WM_GETMINMAXINFO: {
+        auto* limits = reinterpret_cast<MINMAXINFO*>(lp);
+        limits->ptMinTrackSize.x = 900;
+        limits->ptMinTrackSize.y = 600;
+        return 0;
+    }
+    case WM_SETCURSOR: {
+        if (LOWORD(lp) == HTCLIENT) {
+            POINT cursor{};
+            GetCursorPos(&cursor);
+            ScreenToClient(hwnd, &cursor);
+            const int right_x = g_app.width - g_app.right_width;
+            if ((std::abs(cursor.x - g_app.left_width) <= 5 || std::abs(cursor.x - right_x) <= 5)
+                && cursor.y >= kHeaderHeight && cursor.y < g_app.height - kFooterHeight) {
+                SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+                return TRUE;
+            }
+        }
+        break;
+    }
     case WM_SIZE:
         g_app.width=LOWORD(lp); g_app.height=HIWORD(lp);
         InvalidateRect(hwnd,nullptr,FALSE);
         return 0;
     case WM_LBUTTONDOWN: {
         const int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
+        const int right_x = g_app.width - g_app.right_width;
+        if (y >= kHeaderHeight && y < g_app.height - kFooterHeight
+            && std::abs(x - g_app.left_width) <= 5) {
+            g_app.resizing_left_panel = true;
+            SetCapture(hwnd);
+            return 0;
+        }
+        if (y >= kHeaderHeight && y < g_app.height - kFooterHeight
+            && std::abs(x - right_x) <= 5) {
+            g_app.resizing_right_panel = true;
+            SetCapture(hwnd);
+            return 0;
+        }
         const int view_w=std::max(1,g_app.width-g_app.left_width-g_app.right_width);
         const int view_h=std::max(1,g_app.height-kHeaderHeight-kFooterHeight);
         if(x<g_app.left_width) {
@@ -383,12 +433,24 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
     }
     case WM_LBUTTONUP:
         g_app.drag_axis=-1;
+        g_app.resizing_left_panel=false;
+        g_app.resizing_right_panel=false;
         if(GetCapture()==hwnd) ReleaseCapture();
         return 0;
     case WM_MOUSEMOVE: {
         const int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
         bool scene_changed=false;
-        if(g_app.orbiting) {
+        if(g_app.resizing_left_panel && (wp & MK_LBUTTON)) {
+            const int maximum = std::max(170, g_app.width - g_app.right_width - 300);
+            const int resized = std::clamp(x, 170, maximum);
+            scene_changed = resized != g_app.left_width;
+            g_app.left_width = resized;
+        } else if(g_app.resizing_right_panel && (wp & MK_LBUTTON)) {
+            const int maximum = std::max(240, g_app.width - g_app.left_width - 300);
+            const int resized = std::clamp(g_app.width - x, 240, maximum);
+            scene_changed = resized != g_app.right_width;
+            g_app.right_width = resized;
+        } else if(g_app.orbiting) {
             const float dx=static_cast<float>(x-g_app.last_mouse.x),dy=static_cast<float>(y-g_app.last_mouse.y);
             g_app.yaw-=dx*0.006F;
             // Upward mouse motion (negative dy) now looks upward.
@@ -437,6 +499,12 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
             g_app.status=L"Usunięto obiekt";
         }
         InvalidateRect(hwnd,nullptr,FALSE);
+        return 0;
+    case WM_CAPTURECHANGED:
+        g_app.orbiting = false;
+        g_app.drag_axis = -1;
+        g_app.resizing_left_panel = false;
+        g_app.resizing_right_panel = false;
         return 0;
     case WM_DESTROY:
         if(g_app.backbuffer_dc) {
