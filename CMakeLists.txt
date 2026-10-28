@@ -28,10 +28,12 @@ if(WIN32)
     add_executable(engine_editor WIN32
         src/editor/main.cpp
         src/editor/app.cpp
+        src/editor/ui_gdi.cpp
         src/editor/ui.cpp
         src/editor/render.cpp
         src/editor/scene_io.cpp
         src/editor/interaction.cpp
+        src/editor/gizmo.cpp
         src/editor/window.cpp
     )
     target_link_libraries(engine_editor PRIVATE engine_core user32 gdi32)
