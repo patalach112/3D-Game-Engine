@@ -54,6 +54,7 @@ Komendy wersji terminalowej: `add`, `select ID`, `move X Y Z`, `delete`, `save`,
 - Siatkę bez wypełnionej podłogi: tło widoku prześwituje pomiędzy liniami. Linie mają poprawioną interpolację głębokości, delikatne wygaszanie i większą odporność na znikanie przy przecięciach.
 - Windowsowy interfejs rysowany do bufora pozaekranowego i odświeżany tylko po zmianie sceny lub okna, by ograniczyć miganie i niepotrzebne obciążenie CPU.
 - Windowsowy, skalowalny interfejs z hierarchią i inspektorem, wyświetlający tekst Unicode w Segoe UI. Główne okno można zmieniać rozmiarem, a szerokość paneli zmienić przez przeciągnięcie separatorów.
+- Interfejs rysowany offline i kopowany na krawędzi paneli: zapasowy bufor GDI, cached będące przyciski/pola i pojedynczy tekst paska statusu to wszystko, co odświeżane jest w każdym kadrze. Przyciski, pola i ikony tworzą swoje obiekty GDI tylko raz, a nie przy każdym odwróceniu.
 - Zaznaczanie i przesuwanie obiektów kolorowymi uchwytami osi.
 - Obracanie kamery prawym przyciskiem myszy i przybliżanie kółkiem.
 - Zapis sceny do `scene.txt`.

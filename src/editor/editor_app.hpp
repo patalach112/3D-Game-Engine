@@ -60,6 +60,15 @@ struct App {
     HFONT font{};
     HFONT bold_font{};
     int font_height{};
+
+    // Renderowana offline warstwa interfejsu. Rebuild, gdy zmienią się rozmiary
+    // okna, szerokości paneli, lista obiektów, zaznaczenie lub edytowane pole.
+    HDC ui_dc{};
+    HBITMAP ui_bitmap{};
+    HBITMAP ui_previous{};
+    int ui_width{};
+    int ui_height{};
+    std::wstring ui_signature;
 };
 
 // Wspólny stan edytora, dostępny z każdego modułu.
@@ -97,6 +106,12 @@ void draw_button(HDC dc, RECT rect, const wchar_t* caption, bool primary = false
 void draw_input(HDC dc, int field);
 void draw_entity_icon(HDC dc, const engine::Entity& entity, int x, int y, COLORREF color);
 void draw_ui(HDC dc);
+
+// Buduje (lub odświeża) zapisany offline interfejs. source_dc powinien być DC
+// okna lub backbuffera, z którego tworzone są bitmapy kompatybilne.
+void ensure_ui_cache(HDC source_dc);
+// Przy zamykaniu aplikacji: usuwa warstwę interfejsu i zapasowy bufor GDI.
+void release_editor_resources();
 
 // Rasterizacja widoku sceny i kopiowanie jej na backbuffer.
 void ensure_backbuffer(HDC window_dc);

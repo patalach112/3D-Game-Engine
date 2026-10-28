@@ -33,6 +33,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    editor::release_editor_resources();
     if (state.font) DeleteObject(state.font);
     if (state.bold_font) DeleteObject(state.bold_font);
     return static_cast<int>(msg.wParam);
