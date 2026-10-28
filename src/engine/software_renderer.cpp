@@ -219,7 +219,7 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
             const float z=1.0F/(inv_start+(inv_end-inv_start)*t);
             std::uint32_t sample=color;
             if(fade) {
-                const float strength=std::clamp(1.0F-std::max(0.0F,z-12.0F)/85.0F,0.42F,1.0F);
+                const float strength=std::clamp(1.0F-std::max(0.0F,z-10.0F)/490.0F,0.0F,1.0F);
                 const auto mix=[strength](std::uint32_t fg,std::uint32_t bg,int shift) {
                     return static_cast<std::uint32_t>(((fg>>shift)&255U)*strength+((bg>>shift)&255U)*(1-strength));
                 };
@@ -244,43 +244,53 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
     };
     bool ginit=false;
     float gx0=0,gx1=0,gz0=0,gz1=0;
-    constexpr float kHorizon=500.0F;
+    // Horizon grows with camera height so the grid never shows a visible
+    // edge when zoomed out from above.
+    const float horizon=std::max(3000.0F,camera.position.y*300.0F);
     for(const auto& dir:gdirs) {
-        if(dir.y<=-0.0001F) {
-            // Ray points downward: intersects y=0 at a finite point.
+        if(std::abs(dir.y)>0.0001F) {
             const float t=-camera.position.y/dir.y;
             if(t>0) {
+                // Ray intersects y=0 at a finite point.
                 const Vec3 hit=add(camera.position,multiply(dir,t));
                 if(!ginit){gx0=gx1=hit.x;gz0=gz1=hit.z;ginit=true;}
                 else{gx0=std::min(gx0,hit.x);gx1=std::max(gx1,hit.x);gz0=std::min(gz0,hit.z);gz1=std::max(gz1,hit.z);}
+            } else {
+                // Ray doesn't intersect y=0: extend to horizon in XZ direction.
+                const float far=camera.position.x+(dir.x>0.01F?horizon:(dir.x<-0.01F?-horizon:0.0F));
+                const float farz=camera.position.z+(dir.z>0.01F?horizon:(dir.z<-0.01F?-horizon:0.0F));
+                if(!ginit){gx0=gx1=far;gz0=gz1=farz;ginit=true;}
+                else{gx0=std::min(gx0,far);gx1=std::max(gx1,far);gz0=std::min(gz0,farz);gz1=std::max(gz1,farz);}
             }
-        } else {
-            // Ray points upward: grid extends to horizon in the XZ direction.
-            const float far=camera.position.x+(dir.x>0.01F?kHorizon:(dir.x<-0.01F?-kHorizon:0.0F));
-            const float farz=camera.position.z+(dir.z>0.01F?kHorizon:(dir.z<-0.01F?-kHorizon:0.0F));
-            if(!ginit){gx0=gx1=far;gz0=gz1=farz;ginit=true;}
-            else{gx0=std::min(gx0,far);gx1=std::max(gx1,far);gz0=std::min(gz0,farz);gz1=std::max(gz1,farz);}
         }
     }
-    if(!ginit||camera.position.y<0.1F){
+    if(!ginit){
         gx0=camera.position.x-10;gx1=camera.position.x+10;
         gz0=camera.position.z-10;gz1=camera.position.z+10;
     }
+    // Smoother spacing steps reduce visible popping when zooming.
     const float gr=std::max(gx1-gx0,gz1-gz0);
     int step=1;
-    if(gr>200.0F) step=10;
-    if(gr>500.0F) step=50;
+    if(gr>50.0F) step=2;
+    if(gr>150.0F) step=5;
+    if(gr>500.0F) step=25;
+    if(gr>1500.0F) step=100;
+    if(gr>5000.0F) step=500;
+    // Line thickness adapts to distance for readability at all zooms.
+    int thickness=2;
+    if(gr<150.0F) thickness=3;
+    if(gr>1000.0F) thickness=1;
     const float margin=20.0F;
     const int thick=5*step;
     for(int i=static_cast<int>(std::floor(gx0/step))*step;i<=static_cast<int>(std::ceil(gx1/step))*step;i+=step) {
-        const auto color=(i%thick==0)?0x00525255U:0x00373739U;
+        const auto color=(i%thick==0)?0x0068686CU:0x0048484AU;
         const float c=static_cast<float>(i);
-        draw_line({c,0,gz0-margin},{c,0,gz1+margin},color,true,2,true);
+        draw_line({c,0,gz0-margin},{c,0,gz1+margin},color,true,thickness,true);
     }
     for(int i=static_cast<int>(std::floor(gz0/step))*step;i<=static_cast<int>(std::ceil(gz1/step))*step;i+=step) {
-        const auto color=(i%thick==0)?0x00525255U:0x00373739U;
+        const auto color=(i%thick==0)?0x0068686CU:0x0048484AU;
         const float c=static_cast<float>(i);
-        draw_line({gx0-margin,0,c},{gx1+margin,0,c},color,true,2,true);
+        draw_line({gx0-margin,0,c},{gx1+margin,0,c},color,true,thickness,true);
     }
 
     const Vec3 light=normalize({-0.4F,0.8F,0.55F});
