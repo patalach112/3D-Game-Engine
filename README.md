@@ -2,6 +2,22 @@
 
 Własny silnik 3D pisany w C++20. Renderer, rasteryzacja trójkątów, bufor głębokości, geometria sceny i uchwyty transformacji są kodem tego projektu. Nie używamy raylib ani innego gotowego silnika. Na Windowsie korzystamy tylko z systemowych API Win32/GDI do okna, tekstu i prezentacji obrazu.
 
+## Struktura projektu
+
+- `include/engine/` — klasy silnika: `Vec3`, `Scene`, `EditorCamera`, `SoftwareRenderer`.
+- `src/engine/` — implementacja silnika i własnego renderera.
+- `src/editor/` — frontend edytora:
+  - `main.cpp` — punkt wejścia `wWinMain`.
+  - `editor_app.hpp` — wspólny typ `App` oraz deklaracje funkcji.
+  - `app.cpp` — stan edytora, kamera, layout, pola inspektora.
+  - `ui.cpp` — widgety GDI: tekst, przyciski, pola, ikony.
+  - `render.cpp` — rasteryzacja widoku i backbuffer.
+  - `scene_io.cpp` — zapis sceny do `scene.txt`.
+  - `interaction.cpp` — strzałka na obiekt, gizmo, dodawanie obiektów.
+  - `window.cpp` — procedura okna i klawisze/mouse.
+  - `linux_main.cpp` — frontend terminalowy bez X11.
+- `tests/engine_tests.cpp` — testy sceny i renderera.
+
 ## Windows
 
 Wymagane: CMake 3.20+ oraz kompilator C++20, np. Visual Studio 2022 albo MinGW-w64.
