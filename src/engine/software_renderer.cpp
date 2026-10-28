@@ -115,6 +115,18 @@ MeshData make_primitive_mesh(PrimitiveType type) {
     }
     return mesh;
 }
+
+// Generuje mesh raz na typ primitywny i wykorzystuje go w każdym kadrze.
+// Bez cache po każdym obiekcie tworzone były trzy std::vector na frame.
+const MeshData& primitive_mesh(PrimitiveType type) {
+    static const std::array<MeshData, 4> cache{
+        make_primitive_mesh(PrimitiveType::Cube),
+        make_primitive_mesh(PrimitiveType::Sphere),
+        make_primitive_mesh(PrimitiveType::Cylinder),
+        make_primitive_mesh(PrimitiveType::Plane),
+    };
+    return cache[static_cast<std::size_t>(type)];
+}
 } // namespace
 
 ScreenPoint project_to_screen(Vec3 world,const EditorCamera& camera,int width,int height) {
@@ -231,14 +243,18 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
 
     const Vec3 light=normalize({-0.4F,0.8F,0.55F});
     for(const Entity& entity:scene.entities()) {
-        const MeshData mesh=make_primitive_mesh(entity.primitive);
+        const MeshData& mesh=primitive_mesh(entity.primitive);
         const Vec3 scale=entity.transform.scale;
         const float rx=entity.transform.rotation.x*kPi/180.0F;
         const float ry=entity.transform.rotation.y*kPi/180.0F;
         const float rz=entity.transform.rotation.z*kPi/180.0F;
         const float cx=std::cos(rx),sx=std::sin(rx),cy=std::cos(ry),sy=std::sin(ry),cz=std::cos(rz),sz=std::sin(rz);
-        std::vector<Vec3> world(mesh.vertices.size());
-        std::vector<CameraPoint> camera_space(mesh.vertices.size());
+        static std::vector<Vec3> scratch_world;
+        static std::vector<CameraPoint> scratch_camera;
+        scratch_world.resize(mesh.vertices.size());
+        scratch_camera.resize(mesh.vertices.size());
+        Vec3* world=scratch_world.data();
+        CameraPoint* camera_space=scratch_camera.data();
         for(std::size_t i=0;i<mesh.vertices.size();++i) {
             Vec3 p=mesh.vertices[i]; p={p.x*scale.x,p.y*scale.y,p.z*scale.z};
             const Vec3 px{p.x,p.y*cx-p.z*sx,p.y*sx+p.z*cx};
