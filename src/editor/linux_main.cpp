@@ -15,10 +15,10 @@ constexpr int kPreviewHeight = 48;
 
 void save_scene(const engine::Scene& scene) {
     std::ofstream file("scene.txt");
-    file << "# Starter 3D Engine scene v2\n";
+    file << "# Starter 3D Engine scene v3 (primitive type follows the name)\n";
     for (const auto& entity : scene.entities()) {
         const auto& t = entity.transform;
-        file << entity.id << ' ' << entity.name << ' '
+        file << entity.id << ' ' << entity.name << ' ' << static_cast<int>(entity.primitive) << ' '
              << t.position.x << ' ' << t.position.y << ' ' << t.position.z << ' '
              << t.rotation.x << ' ' << t.rotation.y << ' ' << t.rotation.z << ' '
              << t.scale.x << ' ' << t.scale.y << ' ' << t.scale.z << '\n';

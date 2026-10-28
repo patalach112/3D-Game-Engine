@@ -32,7 +32,8 @@ Komendy wersji terminalowej: `add`, `select ID`, `move X Y Z`, `delete`, `save`,
 
 ## Prototyp zawiera
 
-- Sceny i obiekty 3D z pozycją, obrotem oraz skalą.
+- Sceny z kostkami, kulami, walcami i płaszczyznami 3D.
+- Inspektor z edytowalnymi polami pozycji, obrotu i skali. Kliknij wartość, wpisz liczbę i naciśnij Enter.
 - Własny renderer programowy z perspektywą, rasteryzacją ścian i testem głębokości.
 - Siatkę bez wypełnionej podłogi: tło widoku prześwituje pomiędzy liniami. Linie mają poprawioną interpolację głębokości, delikatne wygaszanie i większą odporność na znikanie przy przecięciach.
 - Windowsowy interfejs rysowany do bufora pozaekranowego i odświeżany tylko po zmianie sceny lub okna, by ograniczyć miganie i niepotrzebne obciążenie CPU.

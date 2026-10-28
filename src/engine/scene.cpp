@@ -6,12 +6,12 @@
 
 namespace engine {
 
-Entity& Scene::create_entity(std::string name) {
+Entity& Scene::create_entity(std::string name, PrimitiveType primitive) {
     if (name.empty()) {
         throw std::invalid_argument("Obiekt sceny musi mieć nazwę.");
     }
 
-    entities_.push_back(Entity{next_id_++, std::move(name), {}});
+    entities_.push_back(Entity{next_id_++, std::move(name), primitive, {}});
     return entities_.back();
 }
 
