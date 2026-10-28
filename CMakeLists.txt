@@ -22,11 +22,17 @@ if(WIN32)
     add_executable(engine_editor WIN32 src/editor/main.cpp)
     target_link_libraries(engine_editor PRIVATE engine_core user32 gdi32)
     target_compile_definitions(engine_editor PRIVATE UNICODE _UNICODE)
+    if(MINGW)
+        # MinGW needs this option to use the Unicode wWinMain entry point.
+        target_link_options(engine_editor PRIVATE -municode)
+    endif()
     if(MSVC)
         target_compile_options(engine_editor PRIVATE /W4 /permissive- /utf-8)
     endif()
 else()
-    message(STATUS "The native editor uses the Windows API. The C++ engine core and tests can still be built here.")
+    # Headless Linux build uses the same project-owned renderer and scene core.
+    add_executable(engine_editor src/editor/linux_main.cpp)
+    target_link_libraries(engine_editor PRIVATE engine_core)
 endif()
 
 include(CTest)

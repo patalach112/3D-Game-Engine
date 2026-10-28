@@ -1,47 +1,43 @@
 # Starter 3D Engine
 
-Projektujemy własny silnik 3D w C++20. Nie używamy raylib, Unity ani Unreal jako silnika. Renderer 3D jest napisany w tym repozytorium: rzutuje geometrię, rasteryzuje trójkąty, obsługuje bufor głębokości oraz rysuje siatkę i uchwyty transformacji. Na Windowsie do utworzenia okna i wyświetlenia obrazu używamy natywnego Win32 i GDI.
+Własny silnik 3D pisany w C++20. Renderer, rasteryzacja trójkątów, bufor głębokości, geometria sceny i uchwyty transformacji są kodem tego projektu. Nie używamy raylib ani innego gotowego silnika. Na Windowsie korzystamy tylko z systemowych API Win32/GDI do okna, tekstu i prezentacji obrazu.
 
-## Co działa w prototypie
+## Windows
 
-- Własny programowy renderer 3D w `src/engine/software_renderer.cpp`.
-- Scena z kostkami, perspektywą, oświetleniem ścian i buforem głębokości.
-- Podłoga nie jest wypełnioną, nieprzezroczystą płaszczyzną. Widać tylko delikatną siatkę, a tło sceny prześwituje pomiędzy liniami.
-- Edytor Windows z hierarchią sceny i inspektorem.
-- Zaznaczanie kostek i przesuwanie ich kolorowymi uchwytami na osiach X, Y i Z.
-- Obracanie kamery prawym przyciskiem myszy, przybliżanie kółkiem.
-- Interfejs rysowany natywną czcionką Segoe UI. Napisy są wyświetlane w Unicode, więc polskie znaki działają poprawnie. Rozmiar tekstu dopasowuje się do wysokości okna.
-- Zapisywanie sceny do pliku `scene.txt`.
-
-To nadal wczesny prototyp. Nie ma jeszcze fizyki, edytora kodu użytkownika, programowania wizualnego ani eksportu samodzielnych gier.
-
-## Budowanie na Windows
-
-Wymagane: CMake 3.20+ oraz Visual Studio 2022 z obsługą C++20.
+Wymagane: CMake 3.20+ oraz kompilator C++20, np. Visual Studio 2022 albo MinGW-w64.
 
 ```powershell
 cmake -S . -B build
 cmake --build build --config Release
+# Visual Studio:
 .\build\Release\engine_editor.exe
+# MinGW/Ninja:
+.\build\engine_editor.exe
 ```
 
-Edytor nie pobiera żadnych zewnętrznych bibliotek graficznych. Używa wyłącznie kodu silnika z repozytorium i systemowych API Windows.
+W konfiguracji MinGW CMake dodaje `-municode`, aby linker poprawnie użył wejściowej funkcji `wWinMain`.
 
-## Sterowanie
+## Linux
 
-- `N` — dodaj kostkę
-- `Delete` — usuń zaznaczony obiekt
-- Przeciągnij kolorową kulkę osi — przesuń zaznaczoną kostkę wzdłuż osi
-- Prawy przycisk myszy + ruch — obracaj kamerę
-- Kółko myszy — przybliż lub oddal widok
-- Przycisk „Zapisz scenę” — zapisz scenę do `scene.txt`
+Na Linuxie ten sam rdzeń sceny i własny renderer uruchamiają testowy edytor terminalowy. Pokazuje podgląd 3D w terminalu obsługującym kolory true-color i zapisuje pełny obraz do `scene_preview.ppm`. Wersja ta nie wymaga X11 ani zewnętrznych bibliotek graficznych, dzięki czemu może służyć do budowania i testowania renderera również w środowisku bez pulpitu.
 
-## Testy rdzenia i renderera
-
-```powershell
-cmake -S . -B build
-cmake --build build --config Release
-ctest --test-dir build -C Release --output-on-failure
+```sh
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build -j2
+ctest --test-dir build --output-on-failure
+./build/engine_editor
 ```
 
-Renderer i model sceny mogą być kompilowane oraz testowane także na innych platformach. Graficzny edytor w tym prototypie korzysta z natywnego API Windows.
+Komendy wersji terminalowej: `add`, `select ID`, `move X Y Z`, `delete`, `save`, `render`, `help`, `quit`.
+
+## Prototyp zawiera
+
+- Sceny i obiekty 3D z pozycją, obrotem oraz skalą.
+- Własny renderer programowy z perspektywą, rasteryzacją ścian i testem głębokości.
+- Siatkę bez wypełnionej podłogi: tło widoku prześwituje pomiędzy liniami.
+- Windowsowy interfejs z hierarchią i inspektorem, wyświetlający tekst Unicode w Segoe UI.
+- Zaznaczanie i przesuwanie obiektów kolorowymi uchwytami osi.
+- Obracanie kamery prawym przyciskiem myszy i przybliżanie kółkiem.
+- Zapis sceny do `scene.txt`.
+
+Wersja terminalowa Linuksa służy do sprawdzania rdzenia i renderera. Nie zastępuje jeszcze graficznego edytora Windows. Fizyka, edytor kodu C++, programowanie wizualne oraz eksport gotowej gry są dalszymi etapami.
