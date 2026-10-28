@@ -62,6 +62,7 @@ void render_frame(HWND hwnd) {
     PAINTSTRUCT ps{};
     HDC window_dc = BeginPaint(hwnd, &ps);
     ensure_backbuffer(window_dc);
+    ensure_ui_cache(g.backbuffer_dc);
     StretchDIBits(g.backbuffer_dc, 0, 0, g.width, g.height, 0, 0, g.width, g.height,
                   g.frame.data(), &info, DIB_RGB_COLORS, SRCCOPY);
     draw_ui(g.backbuffer_dc);
