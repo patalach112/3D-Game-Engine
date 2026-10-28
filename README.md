@@ -1,31 +1,23 @@
 # Starter 3D Engine
 
-Własny edytor i silnik 3D na komputery PC. Silnik oraz kod tworzonych gier piszemy w C++. Projekt rozwijamy etapami, zaczynając od edytora sceny 3D.
+Projektujemy własny silnik 3D w C++20. Nie używamy raylib, Unity ani Unreal jako silnika. Renderer 3D jest napisany w tym repozytorium: rzutuje geometrię, rasteryzuje trójkąty, obsługuje bufor głębokości oraz rysuje siatkę i uchwyty transformacji. Na Windowsie do utworzenia okna i wyświetlenia obrazu używamy natywnego Win32 i GDI.
 
 ## Co działa w prototypie
 
-- Ciemny interfejs z hierarchią sceny i inspektorem obiektu.
-- Czcionka Inter z obsługą polskich znaków. Jej licencja OFL 1.1 znajduje się w `assets/licenses/Inter-OFL.txt`.
-- Widok sceny 3D z delikatniejszą siatką i kamerą perspektywiczną.
-- Dodawanie kostek przyciskiem lub klawiszem `N`.
-- Zaznaczanie obiektów w widoku sceny albo na liście.
-- Uchwyt przesuwania z kulkami na obu końcach osi X, Y i Z. Złap kulkę i przeciągnij ją, aby przesunąć obiekt wzdłuż osi.
-- Obracanie kamery prawym przyciskiem myszy. Ruch myszy w górę przesuwa teraz widok w górę.
-- Przybliżanie i oddalanie kółkiem myszy.
-- Usuwanie zaznaczonego obiektu klawiszem `Delete`.
-- Zapisywanie podstawowej sceny do pliku `scene.txt`.
+- Własny programowy renderer 3D w `src/engine/software_renderer.cpp`.
+- Scena z kostkami, perspektywą, oświetleniem ścian i buforem głębokości.
+- Podłoga nie jest wypełnioną, nieprzezroczystą płaszczyzną. Widać tylko delikatną siatkę, a tło sceny prześwituje pomiędzy liniami.
+- Edytor Windows z hierarchią sceny i inspektorem.
+- Zaznaczanie kostek i przesuwanie ich kolorowymi uchwytami na osiach X, Y i Z.
+- Obracanie kamery prawym przyciskiem myszy, przybliżanie kółkiem.
+- Interfejs rysowany natywną czcionką Segoe UI. Napisy są wyświetlane w Unicode, więc polskie znaki działają poprawnie. Rozmiar tekstu dopasowuje się do wysokości okna.
+- Zapisywanie sceny do pliku `scene.txt`.
 
-To wciąż wczesny prototyp. Edytor kodu C++, programowanie wizualne, fizyka oraz eksport gotowej gry nie są jeszcze zaimplementowane.
-
-## Wymagania
-
-- CMake 3.20 lub nowszy
-- Kompilator C++20, np. Visual Studio 2022 na Windows
-- Połączenie z internetem przy pierwszej konfiguracji, aby CMake pobrał raylib z GitHub
+To nadal wczesny prototyp. Nie ma jeszcze fizyki, edytora kodu użytkownika, programowania wizualnego ani eksportu samodzielnych gier.
 
 ## Budowanie na Windows
 
-Otwórz PowerShell w folderze repozytorium i wykonaj:
+Wymagane: CMake 3.20+ oraz Visual Studio 2022 z obsługą C++20.
 
 ```powershell
 cmake -S . -B build
@@ -33,18 +25,23 @@ cmake --build build --config Release
 .\build\Release\engine_editor.exe
 ```
 
-CMake pobierze raylib automatycznie i skopiuje pliki czcionki obok programu. Po uruchomieniu edytora przycisk `Zapisz scenę` utworzy plik `scene.txt` w bieżącym katalogu.
+Edytor nie pobiera żadnych zewnętrznych bibliotek graficznych. Używa wyłącznie kodu silnika z repozytorium i systemowych API Windows.
 
 ## Sterowanie
 
 - `N` — dodaj kostkę
 - `Delete` — usuń zaznaczony obiekt
-- Przeciągnij kolorową kulkę uchwytu — przesuń obiekt wzdłuż osi
+- Przeciągnij kolorową kulkę osi — przesuń zaznaczoną kostkę wzdłuż osi
 - Prawy przycisk myszy + ruch — obracaj kamerę
-- Kółko myszy — przybliż / oddal widok
+- Kółko myszy — przybliż lub oddal widok
+- Przycisk „Zapisz scenę” — zapisz scenę do `scene.txt`
 
-## Testy
+## Testy rdzenia i renderera
 
 ```powershell
+cmake -S . -B build
+cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
+
+Renderer i model sceny mogą być kompilowane oraz testowane także na innych platformach. Graficzny edytor w tym prototypie korzysta z natywnego API Windows.
