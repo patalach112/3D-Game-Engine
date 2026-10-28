@@ -1,26 +1,27 @@
 # Starter 3D Engine
 
-Własny edytor i silnik 3D na komputery PC. Silnik oraz kod tworzonych gier piszemy w C++. Celem jest narzędzie, które z czasem połączy wygodny edytor wizualny z normalnym kodowaniem.
+Własny edytor i silnik 3D na komputery PC. Silnik oraz kod tworzonych gier piszemy w C++. Projekt rozwijamy etapami, zaczynając od edytora sceny 3D.
 
-## Co już działa
+## Co działa w prototypie
 
-- Okno edytora 3D z panelem sceny i inspektorem obiektu.
-- Widok perspektywiczny z siatką i kostkami 3D.
-- Dodawanie kostek przyciskiem albo klawiszem `N`.
-- Zaznaczanie obiektów w widoku 3D oraz na liście sceny.
-- Przesuwanie zaznaczonego obiektu strzałkami i klawiszami `Page Up` / `Page Down`.
-- Obracanie kamery prawym przyciskiem myszy i przybliżanie kółkiem.
+- Ciemny interfejs z hierarchią sceny i inspektorem obiektu.
+- Czcionka Inter z obsługą polskich znaków. Jej licencja OFL 1.1 znajduje się w `assets/licenses/Inter-OFL.txt`.
+- Widok sceny 3D z delikatniejszą siatką i kamerą perspektywiczną.
+- Dodawanie kostek przyciskiem lub klawiszem `N`.
+- Zaznaczanie obiektów w widoku sceny albo na liście.
+- Uchwyt przesuwania z kulkami na obu końcach osi X, Y i Z. Złap kulkę i przeciągnij ją, aby przesunąć obiekt wzdłuż osi.
+- Obracanie kamery prawym przyciskiem myszy. Ruch myszy w górę przesuwa teraz widok w górę.
+- Przybliżanie i oddalanie kółkiem myszy.
 - Usuwanie zaznaczonego obiektu klawiszem `Delete`.
-- Zapisywanie podstawowej sceny do `scene.txt`.
-- Testy podstawowego modelu sceny i transformacji.
+- Zapisywanie podstawowej sceny do pliku `scene.txt`.
 
-To wczesny prototyp. Nie ma jeszcze edytora kodu, programowania wizualnego, fizyki ani eksportu samodzielnej gry. Te elementy będą dokładane etapami.
+To wciąż wczesny prototyp. Edytor kodu C++, programowanie wizualne, fizyka oraz eksport gotowej gry nie są jeszcze zaimplementowane.
 
 ## Wymagania
 
 - CMake 3.20 lub nowszy
 - Kompilator C++20, np. Visual Studio 2022 na Windows
-- Połączenie z internetem przy pierwszej konfiguracji, aby CMake pobrał bibliotekę raylib z GitHub
+- Połączenie z internetem przy pierwszej konfiguracji, aby CMake pobrał raylib z GitHub
 
 ## Budowanie na Windows
 
@@ -32,15 +33,14 @@ cmake --build build --config Release
 .\build\Release\engine_editor.exe
 ```
 
-CMake pobiera raylib automatycznie podczas pierwszej konfiguracji. Po uruchomieniu edytora scena może być zapisana przyciskiem `Zapisz scene`; plik `scene.txt` pojawi się w bieżącym katalogu uruchomienia programu.
+CMake pobierze raylib automatycznie i skopiuje pliki czcionki obok programu. Po uruchomieniu edytora przycisk `Zapisz scenę` utworzy plik `scene.txt` w bieżącym katalogu.
 
-## Skróty edytora
+## Sterowanie
 
 - `N` — dodaj kostkę
 - `Delete` — usuń zaznaczony obiekt
-- Strzałki — przesuń obiekt w poziomie
-- `Page Up` / `Page Down` — przesuń obiekt w pionie
-- Prawy przycisk myszy i ruch — obracaj kamerę
+- Przeciągnij kolorową kulkę uchwytu — przesuń obiekt wzdłuż osi
+- Prawy przycisk myszy + ruch — obracaj kamerę
 - Kółko myszy — przybliż / oddal widok
 
 ## Testy
@@ -48,10 +48,3 @@ CMake pobiera raylib automatycznie podczas pierwszej konfiguracji. Po uruchomien
 ```powershell
 ctest --test-dir build -C Release --output-on-failure
 ```
-
-## Struktura
-
-- `include/engine/` — publiczne typy silnika, matematyka i scena
-- `src/engine/` — implementacja rdzenia
-- `src/editor/` — aplikacja edytora 3D
-- `tests/` — testy automatyczne
