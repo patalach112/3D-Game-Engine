@@ -296,14 +296,10 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
             const int max_x=std::min(width_-1,static_cast<int>(std::ceil(std::min(x_max,kLimit))));
             const int min_y=std::max(0,static_cast<int>(std::floor(std::max(y_min,-kLimit))));
             const int max_y=std::min(height_-1,static_cast<int>(std::ceil(std::min(y_max,kLimit))));
-            // Camera inside a huge primitive: triangles cover most of the screen
-            // and their fill dominates the frame time. Skip the fill — edges are
-            // drawn separately and give a useful wireframe for editing.
-            if(camera_inside) {
-                const float bbox=static_cast<float>(max_x-min_x+1)*static_cast<float>(max_y-min_y+1);
-                const float screen=static_cast<float>(width_)*static_cast<float>(height_);
-                if(bbox>screen*0.30F) return;
-            }
+            // Camera inside a huge primitive: filli dominacje czasem kadry.
+            // Przeskakujemy wszystkie filli i rysujemy tylko krawędzie —
+            // wireframe jest szybszy i użyteczny do edycji dużych primitywów.
+            if(camera_inside) return;
             for(int y=min_y;y<=max_y;++y) for(int x=min_x;x<=max_x;++x) {
                 const float px=static_cast<float>(x)+0.5F,py=static_cast<float>(y)+0.5F;
                 const float w0=((p1.x-px)*(p2.y-py)-(p1.y-py)*(p2.x-px))/area;
@@ -360,7 +356,7 @@ void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,Enti
             for(int i=0;i<count;++i) sp[i]=project_camera(poly[i]);
             for(int i=1;i+1<count;++i) fill_triangle(sp[0],sp[i],sp[i+1],color);
         }
-        const bool show_edges=entity.primitive==PrimitiveType::Cube||(is_selected&&entity.primitive!=PrimitiveType::Sphere);
+        const bool show_edges=entity.primitive==PrimitiveType::Cube||(is_selected&&entity.primitive!=PrimitiveType::Sphere)||camera_inside;
         if(show_edges) for(const auto& edge:mesh.edges) {
             draw_line(world[static_cast<std::size_t>(edge[0])],world[static_cast<std::size_t>(edge[1])],
                       is_selected?0x00F1A06BU:0x00555558U,true,1,false);
