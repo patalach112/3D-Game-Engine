@@ -181,7 +181,8 @@ void draw_ui() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{10,4});
     panel("status",0,height-kFooterHeight,width,kFooterHeight,ImGuiWindowFlags_NoScrollbar);
     const auto status=utf8(g.status);
-    ImGui::TextDisabled("%s  |  %zu obiektów",status.c_str(),g.scene.entity_count());
+    ImGui::TextDisabled("%s  |  %zu obiektów  |  %.1f FPS",status.c_str(),g.scene.entity_count(),
+        static_cast<double>(ImGui::GetIO().Framerate));
     ImGui::End(); ImGui::PopStyleVar();
     // A focused hierarchy is not a textbox. Keep editor shortcuts available
     // there, but never delete/spawn while typing, dragging a field or in a popup.
