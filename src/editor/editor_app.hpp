@@ -31,6 +31,8 @@ struct App {
     std::chrono::steady_clock::time_point next_frame{};
     std::chrono::steady_clock::time_point previous_frame{};
     bool grid_visible{true};
+    bool vsync{true};
+    bool settings_dirty{};
     engine::Vec3 background_color{39.0F / 255.0F, 39.0F / 255.0F, 41.0F / 255.0F};
 
     engine::OrbitState orbit;
@@ -61,6 +63,9 @@ void schedule_next_frame(App& state, FrameClock::time_point started,
                          FrameClock::time_point completed) noexcept;
 [[nodiscard]] unsigned long frame_wait_milliseconds(const App& state,
                                                      FrameClock::time_point now) noexcept;
+void reset_graphics_settings();
+[[nodiscard]] bool load_graphics_settings();
+[[nodiscard]] bool save_graphics_settings();
 engine::Vec3 add(engine::Vec3 a,engine::Vec3 b);
 engine::Vec3 sub(engine::Vec3 a,engine::Vec3 b);
 engine::Vec3 mul(engine::Vec3 a,float n);

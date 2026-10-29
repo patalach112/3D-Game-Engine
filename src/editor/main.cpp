@@ -9,6 +9,7 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
     engine::log_init("engine.log");
     LOG_INFO("editor", "Starter 3D Editor start");
     auto& state=editor::app();
+    (void)editor::load_graphics_settings();
     state.scene.create_entity("Cube 0").transform.position={0,0.5F,0};
     state.selected=1;
     editor::update_camera();
@@ -26,6 +27,7 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
         };
         main_window=engine::createnewwindow(config);
         hwnd=reinterpret_cast<HWND>(main_window->native_handle().window);
+        state.renderer.set_vsync(state.vsync);
         state.renderer.set_window(main_window->native_handle().instance,hwnd);
         LOG_INFO("editor", "Creating Vulkan renderer");
         state.renderer.initialize();
@@ -69,12 +71,15 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
             }
         }
         state.ready=false;
+        if (state.settings_dirty && !editor::save_graphics_settings())
+            LOG_WARN("editor", "Could not save graphics settings");
         state.renderer.shutdown();
         LOG_INFO("editor", "Editor shutdown");
         engine::log_shutdown();
         return exit_code;
     } catch (const std::exception& error) {
         state.ready=false;
+        if (state.settings_dirty) (void)editor::save_graphics_settings();
         state.renderer.shutdown();
         LOG_ERROR("editor", "Vulkan error: %s", error.what());
         MessageBoxA(hwnd,error.what(),"Vulkan initialization error",MB_OK|MB_ICONERROR);

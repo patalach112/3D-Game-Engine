@@ -399,6 +399,7 @@ struct VulkanRenderer::Impl {
     int target_width{}, target_height{};
     bool rendered{};
     bool recording{}; // Scene pass and presentation share one submission on Windows.
+    bool vsync{true};
 
     ~Impl() { cleanup(); }
     void init();
@@ -1143,8 +1144,12 @@ void VulkanRenderer::Impl::create_swapchain() {
     check(vkGetPhysicalDeviceSurfacePresentModesKHR(physical,surface,&mode_count,nullptr),"Query presentation modes");
     std::vector<VkPresentModeKHR> modes(mode_count);
     check(vkGetPhysicalDeviceSurfacePresentModesKHR(physical,surface,&mode_count,modes.data()),"Query presentation modes");
-    if (std::find(modes.begin(),modes.end(),VK_PRESENT_MODE_MAILBOX_KHR)!=modes.end())
-        info.presentMode=VK_PRESENT_MODE_MAILBOX_KHR;
+    if (!vsync) {
+        if (std::find(modes.begin(),modes.end(),VK_PRESENT_MODE_IMMEDIATE_KHR)!=modes.end())
+            info.presentMode=VK_PRESENT_MODE_IMMEDIATE_KHR;
+        else if (std::find(modes.begin(),modes.end(),VK_PRESENT_MODE_MAILBOX_KHR)!=modes.end())
+            info.presentMode=VK_PRESENT_MODE_MAILBOX_KHR;
+    }
     info.clipped=VK_TRUE;
     check(vkCreateSwapchainKHR(device,&info,nullptr,&swapchain),"Create Vulkan swapchain");
     swap_extent=extent; swap_format=chosen->format;
@@ -1257,6 +1262,7 @@ VulkanRenderer::VulkanRenderer() : impl_(std::make_unique<Impl>()) {}
 VulkanRenderer::~VulkanRenderer() = default;
 void VulkanRenderer::initialize() {
     if (!impl_) impl_=std::make_unique<Impl>();
+    impl_->vsync=vsync_;
     try {
         LOG_DEBUG("renderer", "Initializing Vulkan instance");
         impl_->init();
@@ -1371,6 +1377,16 @@ void VulkanRenderer::set_clear_color(Vec3 color) {
         || color.y < 0.0F || color.y > 1.0F || color.z < 0.0F || color.z > 1.0F)
         throw std::invalid_argument("Clear color components must be finite and between 0 and 1");
     clear_color_ = color;
+}
+void VulkanRenderer::set_vsync(bool enabled) {
+    if (vsync_==enabled) return;
+    vsync_=enabled;
+    if (!impl_) return;
+    impl_->vsync=enabled;
+    if (impl_->device && impl_->surface && impl_->swapchain) {
+        check(vkDeviceWaitIdle(impl_->device),"Wait before changing VSync");
+        impl_->destroy_swapchain();
+    }
 }
 void VulkanRenderer::resize(int width, int height) {
     width_=std::max(1,width); height_=std::max(1,height);

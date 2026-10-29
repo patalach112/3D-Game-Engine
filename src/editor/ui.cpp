@@ -19,7 +19,7 @@ void panel(const char* id,float x,float y,float width,float height,ImGuiWindowFl
 }
 void heading(const char* text) {
     ImGui::TextColored({0.32F,0.85F,0.80F,1},"%s",text);
-    ImGui::Separator(); ImGui::Spacing();
+    ImGui::Separator();
 }
 void splitter(const char* id,float x,float y,float w,float h,int& value,bool reverse) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{0,0});
@@ -43,9 +43,10 @@ std::string utf8(const std::wstring& value) {
 }
 void vector_input(const char* label,engine::Vec3& vector,float speed) {
     float values[]{vector.x,vector.y,vector.z};
+    ImGui::PushID(label);
+    ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(label);
-    ImGui::SameLine(); ImGui::TextDisabled("X / Y / Z");
-    ImGui::PushID(label); ImGui::SetNextItemWidth(-1);
+    ImGui::SameLine(72); ImGui::SetNextItemWidth(-1);
     if (ImGui::DragFloat3("##value",values,speed,0,0,"%.3f")
         && std::isfinite(values[0]) && std::isfinite(values[1]) && std::isfinite(values[2]))
         vector={values[0],values[1],values[2]};
@@ -56,7 +57,7 @@ void hierarchy() {
     heading("HIERARCHIA");
     ImGui::TextDisabled("%zu obiektów w scenie",g.scene.entity_count());
     ImGui::Spacing();
-    if (ImGui::Button("+ Dodaj obiekt",{-1,34})) ImGui::OpenPopup("create");
+    if (ImGui::Button("+ Dodaj obiekt",{-1,30})) ImGui::OpenPopup("create");
     if (ImGui::BeginPopup("create")) {
         if (ImGui::MenuItem("Kostka")) add_primitive(engine::PrimitiveType::Cube);
         if (ImGui::MenuItem("Kula")) add_primitive(engine::PrimitiveType::Sphere);
@@ -176,42 +177,64 @@ void draw_ui() {
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Ustawienia grafiki")) {
-            ImGui::TextDisabled("WYŚWIETLANIE");
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{7,4});
+            ImGui::SeparatorText("WYŚWIETLANIE");
             bool unlimited=g.fps_limit==0;
-            if (ImGui::Checkbox("Unlimited FPS",&unlimited)) {
+            if (ImGui::Checkbox("Bez limitu FPS",&unlimited)) {
                 g.fps_limit=unlimited?0:60;
                 g.next_frame={}; // Apply the new mode without waiting for the old deadline.
-                g.status=unlimited?L"Limit FPS: unlimited":L"Limit FPS: 60";
+                g.settings_dirty=true;
+                g.status=unlimited?L"Limit FPS: wyłączony":L"Limit FPS: 60";
             }
+            ImGui::SameLine(180);
+            if (ImGui::Checkbox("VSync",&g.vsync)) {
+                g.settings_dirty=true;
+                g.status=g.vsync?L"VSync włączony":L"VSync wyłączony";
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("VSync zapobiega rozrywaniu obrazu. Zmiana odtwarza swapchain.");
             if (!unlimited) {
-                ImGui::SetNextItemWidth(240);
-                if (ImGui::SliderInt("Limit FPS",&g.fps_limit,15,360,"%d FPS")) {
-                    g.next_frame={};
+                ImGui::SetNextItemWidth(260);
+                if (ImGui::SliderInt("Limit klatek",&g.fps_limit,15,360,"%d FPS")) {
+                    g.next_frame={}; g.settings_dirty=true;
                     g.status=L"Zmieniono limit FPS";
                 }
-                ImGui::SameLine();
-                const int presets[]{30,60,120,144,240};
-                for (const int preset:presets) {
-                    ImGui::PushID(preset);
-                    if (ImGui::SmallButton(std::to_string(preset).c_str())) {
-                        g.fps_limit=preset; g.next_frame={};
-                    }
-                    ImGui::PopID(); ImGui::SameLine();
-                }
-                ImGui::NewLine();
             } else {
-                ImGui::TextDisabled("Renderer tworzy klatki tak szybko, jak pozwala CPU/GPU.");
+                ImGui::TextDisabled("Brak programowego limitu; VSync lub sterownik nadal mogą ograniczać FPS.");
             }
-            ImGui::Separator();
-            ImGui::TextDisabled("WIDOK 3D");
-            ImGui::Checkbox("Pokaż siatkę",&g.grid_visible);
-            ImGui::SetNextItemWidth(240);
-            ImGui::SliderFloat("Pole widzenia",&g.camera.vertical_fov_degrees,30.0F,100.0F,"%.0f°");
+
+            ImGui::SeparatorText("WIDOK 3D");
+            if (ImGui::Checkbox("Pokaż siatkę",&g.grid_visible)) g.settings_dirty=true;
+            ImGui::SameLine(180);
+            ImGui::TextDisabled("MSAA %u×",g.renderer.antialiasing_samples());
+            ImGui::SetNextItemWidth(260);
+            if (ImGui::SliderFloat("Pole widzenia",&g.camera.vertical_fov_degrees,
+                    30.0F,100.0F,"%.0f°"))
+                g.settings_dirty=true;
             float background[]{g.background_color.x,g.background_color.y,g.background_color.z};
+            ImGui::SetNextItemWidth(260);
             if (ImGui::ColorEdit3("Kolor tła",background,
-                ImGuiColorEditFlags_NoInputs|ImGuiColorEditFlags_DisplayRGB))
+                    ImGuiColorEditFlags_NoInputs|ImGuiColorEditFlags_DisplayRGB)) {
                 g.background_color={background[0],background[1],background[2]};
-            ImGui::TextDisabled("MSAA: %u× (wybierane automatycznie dla GPU)",g.renderer.antialiasing_samples());
+                g.settings_dirty=true;
+            }
+
+            ImGui::Separator();
+            ImGui::BeginDisabled(!g.settings_dirty);
+            if (ImGui::Button("Zapisz ustawienia")) {
+                const bool saved=save_graphics_settings();
+                g.status=saved?L"Zapisano ustawienia grafiki":L"Nie udało się zapisać ustawień";
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Przywróć domyślne")) {
+                reset_graphics_settings();
+                g.status=L"Przywrócono ustawienia domyślne";
+            }
+            ImGui::SameLine();
+            if (g.settings_dirty) ImGui::TextColored({0.95F,0.72F,0.30F,1},"niezapisane zmiany");
+            else ImGui::TextDisabled("zapisano");
+            ImGui::PopStyleVar();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();

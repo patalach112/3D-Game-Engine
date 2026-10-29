@@ -47,6 +47,16 @@ int main() {
     assert(editor::frame_wait_milliseconds(g, start) == 0);
     g.fps_limit = 60; g.next_frame = {}; g.previous_frame = {};
 
+    g.fps_limit=144; g.grid_visible=false; g.vsync=false;
+    g.camera.vertical_fov_degrees=80.0F; g.background_color={1,0,0};
+    editor::reset_graphics_settings();
+    assert(g.fps_limit==60 && g.grid_visible && g.vsync && g.settings_dirty);
+    assert(close_enough(g.camera.vertical_fov_degrees,45.0F));
+    same(g.background_color,{39.0F/255.0F,39.0F/255.0F,41.0F/255.0F});
+    g.renderer.set_vsync(false); assert(!g.renderer.vsync());
+    g.renderer.set_vsync(true); assert(g.renderer.vsync());
+    g.settings_dirty=false;
+
     // Constructing App and resizing must not initialize Vulkan or require a GPU.
     check_layout();
     g.width = 900; g.height = 600;

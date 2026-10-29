@@ -4,6 +4,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 
 namespace editor {
 
@@ -38,6 +41,80 @@ unsigned long frame_wait_milliseconds(const App& state, FrameClock::time_point n
     if (std::chrono::duration_cast<FrameClock::duration>(milliseconds) < remaining)
         milliseconds += std::chrono::milliseconds(1);
     return static_cast<unsigned long>(std::max<std::int64_t>(1, milliseconds.count()));
+}
+
+void reset_graphics_settings() {
+    auto& g=app();
+    g.fps_limit=60;
+    g.grid_visible=true;
+    g.vsync=true;
+    g.camera.vertical_fov_degrees=45.0F;
+    g.background_color={39.0F/255.0F,39.0F/255.0F,41.0F/255.0F};
+    g.next_frame={};
+    g.settings_dirty=true;
+}
+
+bool load_graphics_settings() {
+    std::ifstream file("editor_settings.ini");
+    if (!file) return false;
+
+    int version{}, fps_limit=60, grid=1, vsync=1;
+    float fov=45.0F;
+    engine::Vec3 background{39.0F/255.0F,39.0F/255.0F,41.0F/255.0F};
+    unsigned int seen{};
+    std::string key;
+    while (file>>key) {
+        if (key=="version") { if (!(file>>version)) return false; seen|=1U; }
+        else if (key=="fps_limit") { if (!(file>>fps_limit)) return false; seen|=2U; }
+        else if (key=="grid_visible") { if (!(file>>grid)) return false; seen|=4U; }
+        else if (key=="vsync") { if (!(file>>vsync)) return false; seen|=8U; }
+        else if (key=="fov") { if (!(file>>fov)) return false; seen|=16U; }
+        else if (key=="background") {
+            if (!(file>>background.x>>background.y>>background.z)) return false;
+            seen|=32U;
+        } else {
+            std::string ignored;
+            std::getline(file,ignored);
+        }
+    }
+    const bool valid=seen==63U && version==1 && (fps_limit==0 || (fps_limit>=15 && fps_limit<=360))
+        && (grid==0 || grid==1) && (vsync==0 || vsync==1)
+        && std::isfinite(fov) && fov>=30.0F && fov<=100.0F
+        && std::isfinite(background.x) && std::isfinite(background.y) && std::isfinite(background.z)
+        && background.x>=0.0F && background.x<=1.0F && background.y>=0.0F && background.y<=1.0F
+        && background.z>=0.0F && background.z<=1.0F;
+    if (!valid) return false;
+
+    auto& g=app();
+    g.fps_limit=fps_limit;
+    g.grid_visible=grid!=0;
+    g.vsync=vsync!=0;
+    g.camera.vertical_fov_degrees=fov;
+    g.background_color=background;
+    g.next_frame={};
+    g.settings_dirty=false;
+    return true;
+}
+
+bool save_graphics_settings() {
+    const auto& g=app();
+    std::ofstream file("editor_settings.tmp",std::ios::trunc);
+    if (!file) return false;
+    file<<"version 1\n"
+        <<"fps_limit "<<g.fps_limit<<'\n'
+        <<"grid_visible "<<(g.grid_visible?1:0)<<'\n'
+        <<"vsync "<<(g.vsync?1:0)<<'\n'
+        <<"fov "<<std::setprecision(9)<<g.camera.vertical_fov_degrees<<'\n'
+        <<"background "<<g.background_color.x<<' '<<g.background_color.y<<' '
+        <<g.background_color.z<<'\n';
+    file.close();
+    if (!file || !MoveFileExW(L"editor_settings.tmp",L"editor_settings.ini",
+            MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileW(L"editor_settings.tmp");
+        return false;
+    }
+    app().settings_dirty=false;
+    return true;
 }
 
 engine::Vec3 add(engine::Vec3 a, engine::Vec3 b) {

@@ -69,6 +69,11 @@ public:
     [[nodiscard]] Vec3 clear_color() const noexcept { return clear_color_; }
     void set_grid_visible(bool visible) noexcept { grid_visible_ = visible; }
     [[nodiscard]] bool grid_visible() const noexcept { return grid_visible_; }
+    // Recreates only the swapchain when changed on a windowed renderer.
+    // Enabled uses guaranteed tear-free FIFO. Disabled prefers IMMEDIATE, then
+    // MAILBOX, and finally falls back to FIFO when the driver offers neither.
+    void set_vsync(bool enabled);
+    [[nodiscard]] bool vsync() const noexcept { return vsync_; }
     void initialize();
     void shutdown() noexcept;
     void resize(int width, int height);
@@ -98,6 +103,7 @@ private:
     int height_{1};
     Vec3 clear_color_{39.0F / 255.0F, 39.0F / 255.0F, 41.0F / 255.0F};
     bool grid_visible_{true};
+    bool vsync_{true};
     std::vector<std::uint32_t> pixels_;
 };
 

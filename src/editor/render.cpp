@@ -43,6 +43,7 @@ void render_frame(HWND hwnd) {
             update_camera();
             g.renderer.set_grid_visible(g.grid_visible);
             g.renderer.set_clear_color(g.background_color);
+            g.renderer.set_vsync(g.vsync);
             g.renderer.render(g.scene,g.camera,g.selected,
                 {static_cast<int>(view.left),static_cast<int>(view.top),
                  static_cast<int>(view.right-view.left),static_cast<int>(view.bottom-view.top)});

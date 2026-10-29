@@ -118,8 +118,10 @@ Komendy terminala: `add`, `select ID`, `move X Y Z`, `delete`, `save`, `render`,
 - Zapis sceny do `scene.txt` (v4: nazwy UTF-8 w cudzysłowach, w tym spacje).
 - GPU UI: wyszukiwanie hierarchii, lista ze scrollem, edycja nazw i transformacji,
   rozwijane sekcje inspektora, przyciski oraz karty zasobów/notatek/diagnostyki.
-- Karta ustawień grafiki: limit 15–360 FPS lub `Unlimited`, widoczność siatki,
-  pole widzenia kamery i kolor tła viewportu. Pasek stanu pokazuje rzeczywisty FPS.
+- Kompaktowa karta ustawień grafiki: limit 15–360 FPS lub `Unlimited`, VSync,
+  widoczność siatki, pole widzenia kamery i kolor tła viewportu. Ustawienia można
+  zapisać do `editor_settings.ini` albo przywrócić jednym przyciskiem; pasek stanu
+  pokazuje rzeczywisty FPS.
 - Wielowierszowe notatki: Enter/Tab, zaznaczanie, schowek i undo; zapis do
   `project_notes.txt`, ponowne wczytanie przy starcie (limit 8191 bajtów UTF-8).
 
@@ -166,14 +168,13 @@ pozostaje — chroni bufor wierzchołków, command buffer i współdzielony dept
 Headless nadal czeka na zakończenie odczytu pikseli. Pełne oczekiwanie na urządzenie
 jest zachowane przy zmianie zasobów/rozmiaru i zamykaniu aplikacji.
 
-Jeśli sterownik obsługuje MAILBOX, renderer wybiera go dla prezentacji bez tearingu
-z mniejszą kolejką starych klatek; w przeciwnym razie używa FIFO. Edytor składa
-teraz scenę i UI w każdej aktywnej klatce, nie używa dawnej bitmapowej pamięci
-podręcznej paneli. Pętla komunikatów usypia do precyzyjnego terminu kolejnej
-klatki dla ustawionego limitu; `Unlimited` usuwa programowy limit i renderuje bez
-wcześniejszego timera 16 ms. FIFO lub synchronizacja sterownika nadal mogą
-naturalnie ograniczyć tempo do odświeżania monitora. Pomiar na rzeczywistym GPU
-jest nadal potrzebny, szczególnie dla dużych scen.
+Przy włączonym VSync renderer używa gwarantowanego trybu FIFO. Po wyłączeniu
+preferuje IMMEDIATE, następnie MAILBOX, a FIFO pozostaje awaryjnym fallbackiem.
+Zmiana tej opcji odtwarza tylko swapchain, bez ponownego tworzenia urządzenia.
+Edytor składa scenę i UI w każdej aktywnej klatce. Pętla komunikatów usypia do
+terminu kolejnej klatki dla ustawionego limitu; `Unlimited` usuwa programowy limit
+i renderuje bez wcześniejszego timera 16 ms. Sterownik nadal może naturalnie
+ograniczyć tempo. Pomiar na rzeczywistym GPU jest potrzebny dla dużych scen.
 
 
 ## Platforma i biblioteka silnika
