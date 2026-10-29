@@ -3,12 +3,41 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 namespace editor {
 
 App& app() {
     static App instance;
     return instance;
+}
+
+bool frame_due(const App& state, FrameClock::time_point now) noexcept {
+    return state.fps_limit <= 0 || state.next_frame.time_since_epoch().count() == 0
+        || now >= state.next_frame;
+}
+
+void schedule_next_frame(App& state, FrameClock::time_point started,
+                         FrameClock::time_point completed) noexcept {
+    if (state.fps_limit <= 0) {
+        state.next_frame = completed;
+        return;
+    }
+    const int limit = std::clamp(state.fps_limit, 1, 1000);
+    const auto interval = std::chrono::duration_cast<FrameClock::duration>(
+        std::chrono::duration<double>(1.0 / static_cast<double>(limit)));
+    state.next_frame = started + interval;
+    // Never queue catch-up frames after a slow render.
+    if (state.next_frame < completed) state.next_frame = completed;
+}
+
+unsigned long frame_wait_milliseconds(const App& state, FrameClock::time_point now) noexcept {
+    if (frame_due(state, now)) return 0;
+    const auto remaining = state.next_frame - now;
+    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(remaining);
+    if (std::chrono::duration_cast<FrameClock::duration>(milliseconds) < remaining)
+        milliseconds += std::chrono::milliseconds(1);
+    return static_cast<unsigned long>(std::max<std::int64_t>(1, milliseconds.count()));
 }
 
 engine::Vec3 add(engine::Vec3 a, engine::Vec3 b) {

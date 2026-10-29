@@ -1,6 +1,8 @@
 #pragma once
 
 #include "engine/export.hpp"
+
+#include <cstdarg>
 #include <cstdio>
 #include <string>
 #include <mutex>
@@ -29,17 +31,27 @@ ENGINE_API void log_shutdown();
 // Interny: dodaje wiersz do logu. Nie używaj bezpośrednio.
 ENGINE_API void log_write(LogLevel level, const char* tag, const std::string& message);
 
+// Helper do formatowania stringa (printf-style).
+inline std::string log_fmt(const char* fmt, ...) {
+    char buffer[512];
+    va_list args;
+    va_start(args, fmt);
+    std::vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    return buffer;
+}
+
 } // namespace engine
 
 // Makra logowania — w Release znikają całkowicie.
 #ifdef NDEBUG
-  #define LOG_DEBUG(tag, msg)   ((void)0)
-  #define LOG_INFO(tag, msg)    ((void)0)
-  #define LOG_WARN(tag, msg)    ((void)0)
-  #define LOG_ERROR(tag, msg)   ((void)0)
+  #define LOG_DEBUG(tag, ...)   ((void)0)
+  #define LOG_INFO(tag, ...)    ((void)0)
+  #define LOG_WARN(tag, ...)    ((void)0)
+  #define LOG_ERROR(tag, ...)   ((void)0)
 #else
-  #define LOG_DEBUG(tag, msg)   engine::log_write(engine::LogLevel::Debug, tag, msg)
-  #define LOG_INFO(tag, msg)    engine::log_write(engine::LogLevel::Info,  tag, msg)
-  #define LOG_WARN(tag, msg)    engine::log_write(engine::LogLevel::Warn,  tag, msg)
-  #define LOG_ERROR(tag, msg)   engine::log_write(engine::LogLevel::Error, tag, msg)
+  #define LOG_DEBUG(tag, ...)   engine::log_write(engine::LogLevel::Debug, tag, engine::log_fmt(__VA_ARGS__))
+  #define LOG_INFO(tag, ...)    engine::log_write(engine::LogLevel::Info,  tag, engine::log_fmt(__VA_ARGS__))
+  #define LOG_WARN(tag, ...)    engine::log_write(engine::LogLevel::Warn,  tag, engine::log_fmt(__VA_ARGS__))
+  #define LOG_ERROR(tag, ...)   engine::log_write(engine::LogLevel::Error, tag, engine::log_fmt(__VA_ARGS__))
 #endif

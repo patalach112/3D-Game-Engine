@@ -77,6 +77,9 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
         state.ready=true;
         ShowWindow(hwnd,show);
         UpdateWindow(hwnd);
+
+        // Render continuously by default. The graphics settings may explicitly
+        // enable a finite limit; native messages/input remain responsive in either mode.
         MSG msg{};
         bool quit=false;
         while (!quit && !state.close_requested) {
@@ -102,8 +105,15 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
                 MsgWaitForMultipleObjectsEx(0,nullptr,INFINITE,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
                 continue;
             }
-            // Continuous rendering: no timer, sleep or fixed FPS target.
+            const auto started=editor::FrameClock::now();
+            if (!editor::frame_due(state,started)) {
+                MsgWaitForMultipleObjectsEx(0,nullptr,editor::frame_wait_milliseconds(state,started),
+                    QS_ALLINPUT,MWMO_INPUTAVAILABLE);
+                continue;
+            }
+            // No timer or default FPS cap; only an explicitly selected limit waits.
             editor::render_frame(hwnd);
+            editor::schedule_next_frame(state,started,editor::FrameClock::now());
         }
         state.ready=false;
         finish_render();
@@ -118,7 +128,7 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
         state.render_worker.reset(); // join before touching renderer or destroying HWND
         state.inputs.reset();
         state.renderer.shutdown();
-        LOG_ERROR("editor",std::string("Vulkan/input worker error: ")+error.what());
+        LOG_ERROR("editor","Vulkan/input worker error: %s",error.what());
         MessageBoxA(hwnd,error.what(),"Engine error",MB_OK|MB_ICONERROR);
         return 1;
     }

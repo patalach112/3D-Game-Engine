@@ -41,6 +41,8 @@ void render_frame(HWND hwnd) {
     engine::apply_orbit(g.camera,g.displayed_orbit);
     // EndFrame/IME/platform work stays on the window thread. Only GPU recording
     // and submission execute on the render worker; no mutable frame is queued.
+    g.renderer.set_grid_visible(g.grid_visible);
+    g.renderer.set_clear_color(g.background_color);
     g.renderer.finish_ui_frame();
     const auto camera=g.camera;
     const auto selected=g.selected;

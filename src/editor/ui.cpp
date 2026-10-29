@@ -175,14 +175,57 @@ void draw_ui() {
             ImGui::TextWrapped("Cały obszar klienta: jeden render pass Vulkan. UI: trójkąty, scissor i atlas fontu. MSAA: %u×. Tekst: filtrowany atlas + pokrycie alpha. Bez bitmap GDI i bez odczytu pikseli na CPU.",g.renderer.antialiasing_samples());
             ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("Ustawienia grafiki")) {
+            ImGui::TextDisabled("WYŚWIETLANIE");
+            bool unlimited=g.fps_limit==0;
+            if (ImGui::Checkbox("Unlimited FPS",&unlimited)) {
+                g.fps_limit=unlimited?0:60;
+                g.next_frame={}; // Apply the new mode without waiting for the old deadline.
+                g.status=unlimited?L"Limit FPS: unlimited":L"Limit FPS: 60";
+            }
+            if (!unlimited) {
+                ImGui::SetNextItemWidth(240);
+                if (ImGui::SliderInt("Limit FPS",&g.fps_limit,15,360,"%d FPS")) {
+                    g.next_frame={};
+                    g.status=L"Zmieniono limit FPS";
+                }
+                ImGui::SameLine();
+                const int presets[]{30,60,120,144,240};
+                for (const int preset:presets) {
+                    ImGui::PushID(preset);
+                    if (ImGui::SmallButton(std::to_string(preset).c_str())) {
+                        g.fps_limit=preset; g.next_frame={};
+                    }
+                    ImGui::PopID(); ImGui::SameLine();
+                }
+                ImGui::NewLine();
+            } else {
+                ImGui::TextDisabled("Renderer tworzy klatki tak szybko, jak pozwala CPU/GPU.");
+            }
+            ImGui::Separator();
+            ImGui::TextDisabled("WIDOK 3D");
+            ImGui::Checkbox("Pokaż siatkę",&g.grid_visible);
+            ImGui::SetNextItemWidth(240);
+            ImGui::SliderFloat("Pole widzenia",&g.camera.vertical_fov_degrees,30.0F,100.0F,"%.0f°");
+            float background[]{g.background_color.x,g.background_color.y,g.background_color.z};
+            if (ImGui::ColorEdit3("Kolor tła",background,
+                ImGuiColorEditFlags_NoInputs|ImGuiColorEditFlags_DisplayRGB))
+                g.background_color={background[0],background[1],background[2]};
+            ImGui::TextDisabled("MSAA: %u× (wybierane automatycznie dla GPU)",g.renderer.antialiasing_samples());
+            ImGui::EndTabItem();
+        }
         ImGui::EndTabBar();
     }
     ImGui::End();
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{10,4});
     panel("status",0,height-kFooterHeight,width,kFooterHeight,ImGuiWindowFlags_NoScrollbar);
     const auto status=utf8(g.status);
-    ImGui::TextDisabled("%s  |  %zu obiektów  |  %.1f FPS",status.c_str(),g.scene.entity_count(),
-        static_cast<double>(ImGui::GetIO().Framerate));
+    if (g.fps_limit==0)
+        ImGui::TextDisabled("%s  |  %zu obiektów  |  %.1f FPS  |  unlimited",status.c_str(),
+            g.scene.entity_count(),static_cast<double>(ImGui::GetIO().Framerate));
+    else
+        ImGui::TextDisabled("%s  |  %zu obiektów  |  %.1f / %d FPS",status.c_str(),
+            g.scene.entity_count(),static_cast<double>(ImGui::GetIO().Framerate),g.fps_limit);
     ImGui::End(); ImGui::PopStyleVar();
     // A focused hierarchy is not a textbox. Keep editor shortcuts available
     // there, but never delete/spawn while typing, dragging a field or in a popup.

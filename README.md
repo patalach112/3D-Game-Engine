@@ -117,7 +117,9 @@ Komendy terminala: `add`, `select ID`, `move X Y Z`, `delete`, `save`, `render`,
   obracanie kamery PPM, zoom kółkiem, zaznaczanie i przeciąganie obiektów.
 - Zapis sceny do `scene.txt` (v4: nazwy UTF-8 w cudzysłowach, w tym spacje).
 - GPU UI: wyszukiwanie hierarchii, lista ze scrollem, edycja nazw i transformacji,
-  rozwijane sekcje inspektora, przyciski, karty zasobów/notatek/diagnostyki.
+  rozwijane sekcje inspektora, przyciski oraz karty zasobów/notatek/diagnostyki.
+- Karta ustawień grafiki: limit 15–360 FPS lub `Unlimited`, widoczność siatki,
+  pole widzenia kamery i kolor tła viewportu. Pasek stanu pokazuje rzeczywisty FPS.
 - Wielowierszowe notatki: Enter/Tab, zaznaczanie, schowek i undo; zapis do
   `project_notes.txt`, ponowne wczytanie przy starcie (limit 8191 bajtów UTF-8).
 
@@ -167,8 +169,11 @@ jest zachowane przy zmianie zasobów/rozmiaru i zamykaniu aplikacji.
 Jeśli sterownik obsługuje MAILBOX, renderer wybiera go dla prezentacji bez tearingu
 z mniejszą kolejką starych klatek; w przeciwnym razie używa FIFO. Edytor składa
 teraz scenę i UI w każdej aktywnej klatce, nie używa dawnej bitmapowej pamięci
-podręcznej paneli. Nie jest to gwarancja konkretnego FPS — pomiar na
-rzeczywistym GPU jest nadal potrzebny, szczególnie dla dużych scen.
+podręcznej paneli. Pętla komunikatów usypia do precyzyjnego terminu kolejnej
+klatki dla ustawionego limitu; `Unlimited` usuwa programowy limit i renderuje bez
+wcześniejszego timera 16 ms. FIFO lub synchronizacja sterownika nadal mogą
+naturalnie ograniczyć tempo do odświeżania monitora. Pomiar na rzeczywistym GPU
+jest nadal potrzebny, szczególnie dla dużych scen.
 
 
 ## Platforma i biblioteka silnika

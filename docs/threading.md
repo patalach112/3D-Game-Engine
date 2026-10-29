@@ -3,8 +3,9 @@
 ## No software FPS cap
 
 The Windows editor continuously prepares a new frame as soon as its render worker
-finishes the preceding CPU job. There is no `WM_TIMER`, 16 ms sleep or fixed FPS
-target. It pumps messages while GPU work is in progress and sleeps on OS events
+finishes the preceding CPU job. The default is unlimited FPS. There is no
+`WM_TIMER` or 16 ms sleep. The graphics settings retain an optional user-selected
+FPS limit; its deadline wait still pumps native messages and input. It pumps messages while GPU work is in progress and sleeps on OS events
 when minimized; minimized time is not included in the next frame delta.
 
 The swapchain requests **IMMEDIATE** presentation when available (tearing is

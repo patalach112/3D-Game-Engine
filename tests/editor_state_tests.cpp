@@ -32,6 +32,22 @@ void check_layout() {
 
 int main() {
     auto& g = editor::app();
+    assert(g.fps_limit == 0); // threaded editor starts uncapped
+    // The frame limiter uses deadlines, supports arbitrary limits and treats 0 as
+    // genuinely uncapped rather than silently falling back to a 16 ms timer.
+    const auto start = editor::FrameClock::time_point(std::chrono::seconds(1));
+    g.fps_limit = 60; g.next_frame = {};
+    assert(editor::frame_due(g, start));
+    editor::schedule_next_frame(g, start, start + std::chrono::milliseconds(2));
+    assert(!editor::frame_due(g, start + std::chrono::milliseconds(15)));
+    assert(editor::frame_due(g, start + std::chrono::milliseconds(17)));
+    assert(editor::frame_wait_milliseconds(g, start + std::chrono::milliseconds(15)) == 2);
+    g.fps_limit = 0;
+    editor::schedule_next_frame(g, start, start + std::chrono::milliseconds(2));
+    assert(editor::frame_due(g, start + std::chrono::milliseconds(2)));
+    assert(editor::frame_wait_milliseconds(g, start) == 0);
+    g.fps_limit = 60; g.next_frame = {}; g.previous_frame = {};
+
     // Constructing App and resizing must not initialize Vulkan or require a GPU.
     check_layout();
     g.width = 900; g.height = 600;
