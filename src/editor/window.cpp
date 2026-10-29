@@ -140,14 +140,59 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp) {
                 g.camera, vw, vh);
             engine::Vec3 hit{};
             if (ray_plane(ray, g.drag_start_position, g.drag_plane_normal, hit)) {
-                const engine::Vec3 axis = mul(
-                    g.drag_axis == 0 ? engine::Vec3{1, 0, 0} : g.drag_axis == 1 ? engine::Vec3{0, 1, 0} : engine::Vec3{0, 0, 1},
-                    g.drag_sign);
-                const float amount = dot(sub(hit, g.drag_start_hit), axis);
                 if (auto* entity = g.scene.find_entity(g.selected)) {
-                    entity->transform.position = add(g.drag_start_position, mul(axis, amount));
-                    scene_changed = true;
-                    g.scene_dirty = true;
+                    if (g.gizmo_mode == 0) {
+                        // Pozycja: ruch wzdłuż osi.
+                        const engine::Vec3 axis = mul(
+                            g.drag_axis == 0 ? engine::Vec3{1, 0, 0} : g.drag_axis == 1 ? engine::Vec3{0, 1, 0} : engine::Vec3{0, 0, 1},
+                            g.drag_sign);
+                        const float amount = dot(sub(hit, g.drag_start_hit), axis);
+                        entity->transform.position = add(g.drag_start_position, mul(axis, amount));
+                        scene_changed = true;
+                        g.scene_dirty = true;
+                    } else if (g.gizmo_mode == 1) {
+                        // Obrót: kąt między początkowym a bieżącym punktem, patrząc od osi.
+                        const engine::Vec3 axis = mul(
+                            g.drag_axis == 0 ? engine::Vec3{1, 0, 0} : g.drag_axis == 1 ? engine::Vec3{0, 1, 0} : engine::Vec3{0, 0, 1},
+                            g.drag_sign);
+                        const engine::Vec3 v0 = sub(g.drag_start_hit, entity->transform.position);
+                        const engine::Vec3 v1 = sub(hit, entity->transform.position);
+                        // Proektujemy na płaszczyznę prostopadłą do osi.
+                        const engine::Vec3 p0 = sub(v0, mul(axis, dot(v0, axis)));
+                        const engine::Vec3 p1 = sub(v1, mul(axis, dot(v1, axis)));
+                        const float mag0 = magnitude(p0);
+                        const float mag1 = magnitude(p1);
+                        if (mag0 > 0.0001F && mag1 > 0.0001F) {
+                            float cos_angle = dot(p0, p1) / (mag0 * mag1);
+                            cos_angle = std::clamp(cos_angle, -1.0F, 1.0F);
+                            const float angle = std::acos(cos_angle) * (g.drag_sign > 0 ? 1.0F : -1.0F);
+                            const float rad = angle * g.drag_sign;
+                            // Obrót wokół osi przez kąt w stopniach.
+                            const engine::Vec3& r = entity->transform.rotation;
+                            const float& slot = (g.drag_axis == 0) ? r.x : (g.drag_axis == 1) ? r.y : r.z;
+                            slot = std::clamp(slot + rad * 57.2958F, -360.0F, 360.0F);
+                            scene_changed = true;
+                            g.scene_dirty = true;
+                        }
+                    } else if (g.gizmo_mode == 2) {
+                        // Skala: współczynnik = odległość bieżąca / początkowa.
+                        const engine::Vec3 axis = mul(
+                            g.drag_axis == 0 ? engine::Vec3{1, 0, 0} : g.drag_axis == 1 ? engine::Vec3{0, 1, 0} : engine::Vec3{0, 0, 1},
+                            g.drag_sign);
+                        const engine::Vec3 v0 = sub(g.drag_start_hit, entity->transform.position);
+                        const engine::Vec3 v1 = sub(hit, entity->transform.position);
+                        const float d0 = dot(v0, axis);
+                        const float d1 = dot(v1, axis);
+                        if (std::abs(d0) > 0.0001F) {
+                            const float factor = d1 / d0;
+                            const float min_scale = 0.01F;
+                            const engine::Vec3& s = entity->transform.scale;
+                            float& slot = (g.drag_axis == 0) ? s.x : (g.drag_axis == 1) ? s.y : s.z;
+                            slot = std::max(min_scale, std::abs(slot) * factor);
+                            scene_changed = true;
+                            g.scene_dirty = true;
+                        }
+                    }
                 }
             }
         }
@@ -202,12 +247,43 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp) {
             }
             return 0;
         }
-        if (wp == 'N') add_primitive(engine::PrimitiveType::Cube);
+        if (wp == 'D' && (GetKeyState(VK_CONTROL) & 0x8000)) duplicate_entity();
+        else if (wp == 'S' && (GetKeyState(VK_CONTROL) & 0x8000)) save_scene();
+        else if (wp == 'N') add_primitive(engine::PrimitiveType::Cube);
+        else if (wp == 'Q') { g.gizmo_mode = 0; g.status = L"Gizmo: pozycja"; }
+        else if (wp == 'W') { g.gizmo_mode = 1; g.status = L"Gizmo: obrót"; }
+        else if (wp == 'E') { g.gizmo_mode = 2; g.status = L"Gizmo: skala"; }
+        else if (wp == 'F') frame_selected();
         else if (wp == VK_DELETE && g.selected) {
             (void)g.scene.remove_entity(g.selected);
             g.selected = g.scene.entity_count() ? g.scene.entities().front().id : 0;
             g.status = L"Usunięto obiekt";
             g.scene_dirty = true;
+        }
+        else if (wp == VK_LEFT || wp == VK_RIGHT || wp == VK_UP || wp == VK_DOWN) {
+            // Przesunięcie zaznaczonego obiektu strzałkami (1 jednostkę).
+            if (auto* entity = g.scene.find_entity(g.selected)) {
+                float dx = 0.0F, dy = 0.0F, dz = 0.0F;
+                if (wp == VK_LEFT) dx = -1.0F;
+                else if (wp == VK_RIGHT) dx = 1.0F;
+                else if (wp == VK_UP) dy = 1.0F;
+                else if (wp == VK_DOWN) dy = -1.0F;
+                entity->transform.position.x += dx;
+                entity->transform.position.y += dy;
+                entity->transform.position.z += dz;
+                g.status = L"Przesunięto obiekt";
+                g.scene_dirty = true;
+            }
+        }
+        else if (wp == VK_ADD || wp == VK_OEM_PLUS) {
+            g.camera_distance = std::max(2.0F, g.camera_distance - 1.0F);
+            update_camera();
+            g.status = L"Przybliżenie";
+        }
+        else if (wp == VK_SUBTRACT || wp == VK_OEM_MINUS) {
+            g.camera_distance = std::min(40.0F, g.camera_distance + 1.0F);
+            update_camera();
+            g.status = L"Oddalenie";
         }
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;

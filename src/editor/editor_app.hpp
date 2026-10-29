@@ -42,6 +42,12 @@ struct App {
     engine::Vec3 drag_start_position{};
     engine::Vec3 drag_start_hit{};
     engine::Vec3 drag_plane_normal{};
+    POINT drag_start_mouse{};
+
+    // Tryb gizma: 0=pozycja, 1=obrót, 2=skala.
+    int gizmo_mode{0};
+    // Wskaźnik do przeciągania przy wyborze typu primitywu.
+    bool dragging_type_selector{false};
 
     std::wstring status{L"Gotowe"};
 
@@ -116,9 +122,13 @@ void render_frame(HWND hwnd);
 // Scena i rzutowania strzałki na obiekt.
 void save_scene();
 void add_primitive(engine::PrimitiveType type);
+void duplicate_entity();
+void frame_selected();
+void snap_camera(int view); // 0=front, 1=top, 2=side, 3=iso
 bool ray_plane(engine::Ray3 ray, engine::Vec3 point, engine::Vec3 normal, engine::Vec3& hit);
 bool ray_box(engine::Ray3 ray, const engine::Entity& entity, float& distance);
 bool hit_gizmo(int sx, int sy, int view_w, int view_h, engine::Entity& entity);
+int gizmo_hit(int sx, int sy, int view_w, int view_h, engine::Entity& entity);
 
 // Procedurowa procedura okna.
 LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp);

@@ -159,4 +159,50 @@ void commit_field_edit() {
     g.field_input.clear();
 }
 
+void duplicate_entity() {
+    App& g = app();
+    auto* source = g.scene.find_entity(g.selected);
+    if (!source) return;
+    auto& copy = g.scene.create_entity(
+        source->name + " copy", source->primitive);
+    copy.transform = source->transform;
+    // Rzucamy kopię o 2 jednostki w kierunku X, aby była widoczna.
+    copy.transform.position.x += 2.0F;
+    g.selected = copy.id;
+    g.active_field = -1;
+    g.status = L"Powielono obiekt";
+    g.scene_dirty = true;
+}
+
+void frame_selected() {
+    App& g = app();
+    auto* entity = g.scene.find_entity(g.selected);
+    if (!entity) return;
+    // Ustawiamy cel kamery na środek obiektu i przybliżamy.
+    const engine::Vec3 center = entity->transform.position;
+    g.camera.target = center;
+    g.camera_distance = 6.0F;
+    g.yaw = 0.75F;
+    g.pitch = 0.42F;
+    update_camera();
+    g.status = L"Ustawiono widok na obiekt";
+    g.scene_dirty = true;
+}
+
+void snap_camera(int view) {
+    App& g = app();
+    const auto& target = g.camera.target;
+    // 0=front (patrzy z tyłu), 1=top (patrzy z góry), 2=side (patrzy z prawej), 3=iso
+    switch (view) {
+    case 0: g.yaw = 0.0F;  g.pitch = 0.0F; break;
+    case 1: g.yaw = 0.0F;  g.pitch = 1.4F; break;
+    case 2: g.yaw = 1.57F; g.pitch = 0.0F; break;
+    default: g.yaw = 0.75F; g.pitch = 0.42F; break;
+    }
+    g.camera_distance = 8.0F;
+    update_camera();
+    g.status = L"Ustawiono widok";
+    g.scene_dirty = true;
+}
+
 } // namespace editor
