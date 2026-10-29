@@ -28,6 +28,8 @@ struct App {
     int drag_axis{-1};
     float drag_sign{1.0F};
     engine::Vec3 drag_start_position{};
+    engine::Vec3 drag_start_rotation{};
+    engine::Vec3 drag_start_scale{1, 1, 1};
     engine::Vec3 drag_start_hit{};
     engine::Vec3 drag_plane_normal{};
     POINT drag_start_mouse{};

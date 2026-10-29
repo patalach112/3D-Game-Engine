@@ -34,9 +34,9 @@ jobs:
           -DCMAKE_CXX_FLAGS=-Werror
       - name: Build editor and tests
         run: cmake --build build --parallel 2
-      - name: Test DLL platform API (no GPU required)
+      - name: Test platform, geometry and editor state (no GPU required)
         run: |
-          ctest --test-dir build -R '^(platform_tests|geometry_tests)$' --output-on-failure --no-tests=error
+          ctest --test-dir build -R '^(platform_tests|geometry_tests|editor_state_tests)$' --output-on-failure --no-tests=error
           ./build/platform_tests.exe --window
       - name: Check EXE and engine DLL imports (no GPU required)
         run: ctest --test-dir build -R '^engine_runtime_dependencies$' --output-on-failure --no-tests=error

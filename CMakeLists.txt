@@ -196,6 +196,20 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME ${TEST} COMMAND ${TEST})
     endforeach()
+    if(WIN32)
+        # Exercise editor state without a window or Vulkan device. Building this
+        # target also catches header/implementation drift in app.cpp.
+        add_executable(editor_state_tests tests/editor_state_tests.cpp src/editor/app.cpp)
+        target_include_directories(editor_state_tests PRIVATE src/editor)
+        target_link_libraries(editor_state_tests PRIVATE engine_core user32)
+        target_compile_definitions(editor_state_tests PRIVATE UNICODE _UNICODE)
+        if(MSVC)
+            target_compile_options(editor_state_tests PRIVATE /UNDEBUG /W4 /permissive- /utf-8)
+        else()
+            target_compile_options(editor_state_tests PRIVATE -UNDEBUG -Wall -Wextra -Wpedantic)
+        endif()
+        add_test(NAME editor_state_tests COMMAND editor_state_tests)
+    endif()
     if(MINGW AND ENGINE_STATIC_MINGW_RUNTIME AND CMAKE_OBJDUMP)
         # Unlike rendering tests, this check does not need a Vulkan driver/GPU.
         add_test(NAME engine_runtime_dependencies

@@ -188,10 +188,27 @@ void draw_ui() {
     const auto popup_flags=ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel;
     if (!ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() && !ImGui::IsPopupOpen(nullptr,popup_flags)) {
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S,false)) save_scene();
+        else if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D,false)) duplicate_entity();
+        else if (!ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F,false)) frame_selected();
+        else if (!ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Q,false)) g.gizmo_mode=0;
+        else if (!ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_W,false)) g.gizmo_mode=1;
+        else if (!ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_E,false)) g.gizmo_mode=2;
         else if (!ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N,false)) add_primitive(engine::PrimitiveType::Cube);
         else if (ImGui::IsKeyPressed(ImGuiKey_Delete,false) && g.selected) {
             (void)g.scene.remove_entity(g.selected); g.selected=0; g.name_target=0;
             g.status=L"Usunięto obiekt";
+        }
+        if (!ImGui::GetIO().WantCaptureKeyboard) {
+            if (auto* entity=g.scene.find_entity(g.selected)) {
+                if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) entity->transform.position.x-=1;
+                if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) entity->transform.position.x+=1;
+                if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) entity->transform.position.y+=1;
+                if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) entity->transform.position.y-=1;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Equal) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd))
+                g.orbit.distance=std::max(2.0F,g.orbit.distance-1.0F);
+            if (ImGui::IsKeyPressed(ImGuiKey_Minus) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract))
+                g.orbit.distance=std::min(40.0F,g.orbit.distance+1.0F);
         }
     }
 }
