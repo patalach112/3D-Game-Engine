@@ -33,5 +33,13 @@ jobs:
           -DCMAKE_CXX_FLAGS=-Werror
       - name: Build editor and tests
         run: cmake --build build --parallel 2
+      - name: Check portable EXE imports (no GPU required)
+        run: ctest --test-dir build -R '^engine_runtime_dependencies$' --output-on-failure --no-tests=error
+      - name: Package redistributable ZIP
+        run: cmake --build build --target package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Windows-portable-editor
+          path: build/Starter3DEngine-*.zip
       # This checks compilation/linking, not presentation: hosted Windows
       # runners are not guaranteed to have a Vulkan-capable GPU/ICD.

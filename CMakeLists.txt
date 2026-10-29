@@ -47,6 +47,13 @@ target_include_directories(engine_core PUBLIC include PRIVATE "${SHADER_DIR}")
 target_link_libraries(engine_core PUBLIC Vulkan::Vulkan)
 target_compile_features(engine_core PUBLIC cxx_std_20)
 
+option(ENGINE_STATIC_MINGW_RUNTIME "Link MinGW runtimes into executables for redistribution" ON)
+if(MINGW AND ENGINE_STATIC_MINGW_RUNTIME)
+    # -static also selects libwinpthread.a if this GCC's libstdc++ needs it.
+    # Vulkan stays an import library: vulkan-1.dll comes from the GPU driver.
+    target_link_options(engine_core INTERFACE -static -static-libgcc -static-libstdc++)
+endif()
+
 if(MSVC)
     target_compile_options(engine_core PRIVATE /W4 /permissive- /utf-8)
 else()
@@ -90,4 +97,20 @@ if(BUILD_TESTING)
         target_compile_options(engine_tests PRIVATE -UNDEBUG)
     endif()
     add_test(NAME engine_tests COMMAND engine_tests)
+    if(MINGW AND ENGINE_STATIC_MINGW_RUNTIME AND CMAKE_OBJDUMP)
+        # Unlike rendering tests, this check does not need a Vulkan driver/GPU.
+        add_test(NAME engine_runtime_dependencies
+            COMMAND "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:engine_editor>"
+                "-DOBJDUMP=${CMAKE_OBJDUMP}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_windows_runtime.cmake")
+    endif()
 endif()
+
+# A small distributable ZIP: shaders are embedded, compiler runtimes are static
+# by default with MinGW. Never package the developer's GPU driver/Vulkan SDK.
+install(TARGETS engine_editor RUNTIME DESTINATION .)
+install(FILES README.md DESTINATION .)
+set(CPACK_GENERATOR ZIP)
+set(CPACK_PACKAGE_NAME Starter3DEngine)
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+include(CPack)

@@ -350,6 +350,7 @@ struct VulkanRenderer::Impl {
     VkFramebuffer framebuffer{};
     int target_width{}, target_height{};
     bool rendered{};
+    bool recording{}; // Scene pass and presentation share one submission on Windows.
 
     ~Impl() { cleanup(); }
     void init();
@@ -703,7 +704,7 @@ void VulkanRenderer::Impl::destroy_target() noexcept {
         if (image->memory) vkFreeMemory(device,image->memory,nullptr);
         *image={};
     }
-    target_width=target_height=0; rendered=false;
+    target_width=target_height=0; rendered=false; recording=false;
 }
 void VulkanRenderer::Impl::create_target(int width, int height) {
     if (target_width==width && target_height==height) return;
@@ -730,6 +731,7 @@ void VulkanRenderer::Impl::begin() {
     VkCommandBufferBeginInfo info{}; info.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     info.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     check(vkBeginCommandBuffer(command,&info),"Begin command buffer");
+    recording=true;
 }
 void VulkanRenderer::Impl::submit(VkSemaphore wait, VkSemaphore signal) {
     check(vkEndCommandBuffer(command),"End command buffer");
@@ -742,16 +744,16 @@ void VulkanRenderer::Impl::submit(VkSemaphore wait, VkSemaphore signal) {
     // Reset only immediately before submission, never before acquire/out-of-date.
     check(vkResetFences(device,1,&fence),"Reset frame fence");
     check(vkQueueSubmit(graphics_queue,1,&info,fence),"Submit Vulkan frame");
+    recording=false;
 }
 void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& camera,
                                 int width, int height, std::vector<std::uint32_t>& pixels) {
     create_target(width,height);
-    check(vkWaitForFences(device,1,&fence,VK_TRUE,UINT64_MAX),"Wait before vertex upload");
     const VkDeviceSize bytes=frame.vertices.size()*sizeof(Vertex);
     ensure_buffer(vertices,std::max(bytes,VkDeviceSize{1}),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    if (bytes) std::memcpy(vertices.mapped,frame.vertices.data(),static_cast<std::size_t>(bytes));
     if (!surface) ensure_buffer(readback,static_cast<VkDeviceSize>(width)*height*4,VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    begin();
+    begin(); // Wait once, BEFORE overwriting memory used by the previous submission.
+    if (bytes) std::memcpy(vertices.mapped,frame.vertices.data(),static_cast<std::size_t>(bytes));
     std::array<VkClearValue,2> clears{};
     clears[0].color={{39.0F/255,39.0F/255,41.0F/255,1}};
     clears[1].depthStencil={1,0};
@@ -791,9 +793,12 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
         barrier.buffer=readback.handle; barrier.size=VK_WHOLE_SIZE;
         vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,0,nullptr,1,&barrier,0,nullptr);
     }
-    submit();
-    check(vkWaitForFences(device,1,&fence,VK_TRUE,UINT64_MAX),"Wait for rendered image");
     rendered=true;
+    // With a window, keep recording: present() appends the swapchain blit and
+    // submits scene + presentation together. No intermediate CPU/GPU round trip.
+    if (surface) return;
+    submit();
+    check(vkWaitForFences(device,1,&fence,VK_TRUE,UINT64_MAX),"Wait for image readback");
     if (!surface) {
         pixels.resize(static_cast<std::size_t>(width)*height);
         const auto* rgba=static_cast<const unsigned char*>(readback.mapped);
@@ -860,7 +865,13 @@ void VulkanRenderer::Impl::create_swapchain() {
     info.queueFamilyIndexCount=graphics_family==present_family?0:2;
     info.pQueueFamilyIndices=graphics_family==present_family?nullptr:families;
     info.preTransform=capabilities.currentTransform; info.compositeAlpha=alpha;
-    info.presentMode=VK_PRESENT_MODE_FIFO_KHR; // Guaranteed, avoids tearing.
+    info.presentMode=VK_PRESENT_MODE_FIFO_KHR; // Guaranteed, tear-free fallback.
+    std::uint32_t mode_count=0;
+    check(vkGetPhysicalDeviceSurfacePresentModesKHR(physical,surface,&mode_count,nullptr),"Query presentation modes");
+    std::vector<VkPresentModeKHR> modes(mode_count);
+    check(vkGetPhysicalDeviceSurfacePresentModesKHR(physical,surface,&mode_count,modes.data()),"Query presentation modes");
+    if (std::find(modes.begin(),modes.end(),VK_PRESENT_MODE_MAILBOX_KHR)!=modes.end())
+        info.presentMode=VK_PRESENT_MODE_MAILBOX_KHR;
     info.clipped=VK_TRUE;
     check(vkCreateSwapchainKHR(device,&info,nullptr,&swapchain),"Create Vulkan swapchain");
     swap_extent=extent; swap_format=chosen->format;
@@ -882,7 +893,10 @@ void VulkanRenderer::Impl::present() {
 #endif
     if (!swapchain) create_swapchain();
     if (!swapchain) return;
-    check(vkWaitForFences(device,1,&fence,VK_TRUE,UINT64_MAX),"Wait before swapchain acquire");
+    // A pending scene pass already waited for the previous frame in begin().
+    // Cached-image presentation starts its own command buffer here. This fence
+    // also guarantees the previous wait on the acquire semaphore has completed.
+    if (!recording) begin();
     std::uint32_t index=0;
     VkResult acquire=VK_ERROR_OUT_OF_DATE_KHR;
     for (int attempt=0;attempt<3;++attempt) {
@@ -894,12 +908,11 @@ void VulkanRenderer::Impl::present() {
     if (acquire==VK_ERROR_OUT_OF_DATE_KHR) {
 #ifdef _WIN32
         // Keep a paint pending if the native window is still being resized.
-        InvalidateRect(GetParent(hwnd),nullptr,FALSE);
+        InvalidateRect(hwnd,nullptr,FALSE);
 #endif
         return;
     }
     if (acquire!=VK_SUBOPTIMAL_KHR) check(acquire,"Acquire swapchain image");
-    begin();
     VkImageMemoryBarrier barrier{};
     barrier.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
     barrier.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED; barrier.newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -922,11 +935,15 @@ void VulkanRenderer::Impl::present() {
     present.swapchainCount=1; present.pSwapchains=&swapchain; present.pImageIndices=&index;
     const VkResult result=vkQueuePresentKHR(present_queue,&present);
     if (result!=VK_ERROR_OUT_OF_DATE_KHR && result!=VK_SUBOPTIMAL_KHR) check(result,"Present Vulkan image");
-    // Deliberately one frame in flight: editor is event-driven, and this keeps
-    // target reuse and resize/destruction simple. No shared depth-image race.
-    check(vkQueueWaitIdle(present_queue),"Wait for presentation queue");
-    if (result==VK_ERROR_OUT_OF_DATE_KHR || result==VK_SUBOPTIMAL_KHR || acquire==VK_SUBOPTIMAL_KHR)
+    // Do not stall the UI thread with vkQueueWaitIdle here. The next begin()
+    // fences command/vertex/target reuse; presentation semaphores are per image
+    // and are reused only after that image is acquired again.
+    if (result==VK_ERROR_OUT_OF_DATE_KHR || result==VK_SUBOPTIMAL_KHR || acquire==VK_SUBOPTIMAL_KHR) {
         create_swapchain();
+#ifdef _WIN32
+        InvalidateRect(hwnd,nullptr,FALSE); // Present the replacement swapchain on the next paint.
+#endif
+    }
 }
 void VulkanRenderer::Impl::cleanup() noexcept {
     if (device) {

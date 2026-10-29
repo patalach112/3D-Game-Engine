@@ -10,6 +10,7 @@ LRESULT CALLBACK viewport_proc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp) {
         PAINTSTRUCT paint{};
         BeginPaint(hwnd, &paint);
         EndPaint(hwnd, &paint);
+        editor::app().viewport_dirty = true;
         // Expose/restore must present even when the scene did not change.
         InvalidateRect(GetParent(hwnd), nullptr, FALSE);
         return 0;

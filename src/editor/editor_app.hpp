@@ -59,6 +59,7 @@ struct App {
 
     // Zmiana kamery, sceny, zaznaczenia lub rozmiaru widoku wymusza przebudowę.
     bool scene_dirty{true};
+    bool viewport_dirty{true}; // Expose/restore needs present; UI-only edits do not.
 
     HFONT font{};
     HFONT bold_font{};
