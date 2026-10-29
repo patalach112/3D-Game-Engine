@@ -65,9 +65,7 @@ void add_primitive(engine::PrimitiveType type) {
     entity.transform.position = {offset, type == engine::PrimitiveType::Plane ? 0.0F : 0.5F, 0.0F};
     if (type == engine::PrimitiveType::Plane) entity.transform.scale = {3.0F, 0.05F, 3.0F};
     g.selected = entity.id;
-    g.active_field = -1;
     g.status = L"Dodano obiekt";
-    g.scene_dirty = true;
 }
 
 } // namespace editor

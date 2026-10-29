@@ -17,7 +17,7 @@ rysujące piksele na CPU. Nie używamy raylib, OpenGL ani Direct3D.
   SPIR-V i osadza w programie; uruchomienie nie wymaga plików shaderów ani
   określonego katalogu roboczego. Nie potrzeba GLM ani shaderc w runtime.
 - `src/engine/scene.cpp`, `include/engine/scene/` — płaska lista encji i transformacje.
-- `src/editor/` — edytor Win32/GDI oraz terminalowy frontend Linuksa.
+- `src/editor/` — edytor Win32 z UI Vulkan oraz terminalowy frontend Linuksa.
 
 Backend tworzy instancję Vulkan, wybiera urządzenie i kolejki, zarządza pamięcią,
 buforami wierzchołków, obrazami koloru/głębokości, render passem, pipeline'ami,
@@ -29,22 +29,24 @@ w konfiguracji Debug, jeśli są zainstalowane. Ich brak nie blokuje startu.
 
 ### Windows
 
-Widok sceny ma osobne okno potomne Win32 z `VkSurfaceKHR` i swapchainem. Przepływ:
+Cały **obszar klienta** głównego okna ma jedną powierzchnię `VkSurfaceKHR` i swapchain.
+Nie ma już osobnego HWND dla widoku 3D ani warstwy paneli GDI. Ramkę systemową,
+pasek tytułu i natywne okno IME nadal obsługuje Windows/DWM.
 
 ```text
-Scene → geometria → vertex buffer → shadery + depth buffer
-      → obraz GPU → blit GPU do swapchaina → vkQueuePresentKHR
+Scene → geometria → viewport + scissor 3D → kolor/depth MSAA
+UI + font atlas → trójkąty + alpha blending w tym samym render passie
+      → resolve GPU → blit GPU do swapchaina → vkQueuePresentKHR
 ```
 
-**Nie ma `SetDIBitsToDevice` ani odczytu pikseli do RAM w ścieżce Windows.**
-GDI nadal rysuje panele, tekst i przyciski edytora, nie scenę 3D.
-Zmiana rozmiaru okna/separatorów odtwarza potrzebne zasoby. Minimalizacja pomija
-renderowanie/prezentację, a `VK_ERROR_OUT_OF_DATE_KHR` i `VK_SUBOPTIMAL_KHR`
-powodują odtworzenie swapchaina. Zasoby są zwalniane po zakończeniu pracy GPU.
+**Bez `DrawTextW`, `BitBlt`, `SetDIBitsToDevice` i odczytu pikseli do RAM na Windows.**
+`BeginPaint`/`EndPaint` wyłącznie zatwierdzają obszar uszkodzenia Win32.
+Zmiana rozmiaru okna odtwarza zasoby; zmiana podziału paneli zmienia viewport,
+bez tworzenia okien potomnych. Minimalizacja zatrzymuje rysowanie, a błędy
+`OUT_OF_DATE`/`SUBOPTIMAL` odtwarzają swapchain. UI odświeża się co około 16 ms
+(timer Win32), aby działały hover, kursor tekstowy i przeciąganie również bez
+zmian sceny. To nie jest gwarancja 60 FPS.
 
-Edytor jest odświeżany zdarzeniowo: rasteryzacja tylko po zmianie sceny, kamery,
-zaznaczenia lub rozmiaru. Odsłonięcie widoku prezentuje zapisany obraz, a zmiana
-samego UI nie wymusza prezentacji GPU.
 Backend współdzieli jeden zestaw zasobów klatki, chroniony fence przed ponownym
 użyciem. Semafory prezentacji są osobne na obraz swapchaina. Nie blokuje CPU po
 każdej prezentacji, ale nie jest jeszcze wieloklatkowym rendererem gry.
@@ -113,14 +115,18 @@ Komendy terminala: `add`, `select ID`, `move X Y Z`, `delete`, `save`, `render`,
 - Gizmo osi X/Y/Z jako nakładka Vulkan, ze stałym ekranowym rozmiarem końcówek.
 - Windows: hierarchia, inspektor, przeciągane separatory paneli, Unicode/Segoe UI,
   obracanie kamery PPM, zoom kółkiem, zaznaczanie i przeciąganie obiektów.
-- Zapis sceny do `scene.txt`.
+- Zapis sceny do `scene.txt` (v4: nazwy UTF-8 w cudzysłowach, w tym spacje).
+- GPU UI: wyszukiwanie hierarchii, lista ze scrollem, edycja nazw i transformacji,
+  rozwijane sekcje inspektora, przyciski, karty zasobów/notatek/diagnostyki.
+- Wielowierszowe notatki: Enter/Tab, zaznaczanie, schowek i undo; zapis do
+  `project_notes.txt`, ponowne wczytanie przy starcie (limit 8191 bajtów UTF-8).
 
 Testy obejmują scenę, każdy prymityw, zaznaczenie, transformacje, głębokość
 niezależną od kolejności obiektów, near clipping, kamerę wewnątrz kostki/kuli,
 obiekt za kamerą, powtarzalność obrazu, zmianę rozmiaru i ponowną inicjalizację.
 Asercje pozostają aktywne również w konfiguracji Release.
 
-Tekstury, bindless, compute culling, fizyka, eksport gry i programowanie wizualne
+Tekstury materiałów sceny, bindless, compute culling, fizyka, eksport gry i programowanie wizualne
 nie są jeszcze zaimplementowane.
 
 ## Przekazanie EXE innemu użytkownikowi (MinGW)
@@ -159,9 +165,9 @@ Headless nadal czeka na zakończenie odczytu pikseli. Pełne oczekiwanie na urz�
 jest zachowane przy zmianie zasobów/rozmiaru i zamykaniu aplikacji.
 
 Jeśli sterownik obsługuje MAILBOX, renderer wybiera go dla prezentacji bez tearingu
-z mniejszą kolejką starych klatek; w przeciwnym razie używa FIFO. Edycja samego UI
-nie prezentuje ponownie niezmienionego viewportu. Odsłonięcie/przywrócenie okna
-wciąż wymusza prezentację. Nie jest to gwarancja konkretnego FPS — pomiar na
+z mniejszą kolejką starych klatek; w przeciwnym razie używa FIFO. Edytor składa
+teraz scenę i UI w każdej aktywnej klatce, nie używa dawnej bitmapowej pamięci
+podręcznej paneli. Nie jest to gwarancja konkretnego FPS — pomiar na
 rzeczywistym GPU jest nadal potrzebny, szczególnie dla dużych scen.
 
 
@@ -197,8 +203,8 @@ while (!window->should_close()) {
 ```
 
 Nie jest to rozpoznawanie systemu przez ten sam EXE: osobno buduje się Windows
-(PE/Win32) i Linux (ELF/X11). Okna edytora Windows korzystają z tej fabryki,
-zachowując dotychczasowe hooki wejścia i viewport Vulkan. Frontend Linux edytora
+(PE/Win32) i Linux (ELF/X11). Główne okno edytora Windows korzysta z tej fabryki;
+wejście jest przekazywane do engine-owned backendu UI i sterowania sceną. Frontend Linux edytora
 pozostaje terminalowy. Przykład samego natywnego okna na obu systemach:
 
 ```sh
@@ -253,3 +259,71 @@ obsługę null i odrzucanie błędnych parametrów. `platform_tests --window` do
 otwiera dwa niezależne okna i sprawdza zamykanie; potrzebuje pulpitu lub Xvfb.
 CI Linux testuje X11 z Xvfb i warianty NASM/C++; CI MinGW sprawdza także importy
 zarówno EXE, jak i engine.dll, by nie przeoczyć zależności runtime w bibliotece.
+
+
+## UI / tekst / antyaliasing — kontrakt dla autora edytora
+
+Implementacja UI jest **w engine**, w `src/engine/ui/third_party/imgui/` (Dear ImGui
+**v1.91.9b**, MIT, wersja przypięta i dołączona do repo). Do zwykłego buildu nie
+potrzeba pobierania ImGui. Edytor buduje layout i zachowanie kontrolek; nie
+kompiluje ani nie linkuje drugiej kopii ImGui. `include/engine/ui.hpp` udostępnia
+API widgetów, eksportowane z tej samej DLL. Nie podmieniaj nagłówków ani
+`imconfig.h` w aplikacji. Licencja jest także w paczce `licenses/Dear-ImGui.txt`.
+
+```cpp
+#include "engine/render/vulkan_renderer.hpp"
+#include "engine/ui.hpp"
+
+// Po set_window(...) oraz initialize(), jeden raz:
+renderer.enable_ui();
+
+// Każda klatka na wątku UI:
+renderer.resize(client_width, client_height); // cały obszar klienta, nie sam widok 3D
+renderer.begin_ui_frame(delta_seconds);
+ImGui::Begin("Panel");
+ImGui::TextUnformatted("Tekst renderowany w Vulkanie");
+ImGui::Button("Przycisk");
+ImGui::End();
+renderer.render(scene, camera, selected, {view_x, view_y, view_width, view_height});
+renderer.present();
+```
+
+- Win32: przed własną obsługą przekazuj **wszystkie** komunikaty do
+  `renderer.handle_ui_message(hwnd, message, wp, lp)`. Sterowanie 3D obsługuj
+  tylko wewnątrz `RenderViewport`, gdy UI nie przechwytuje wejścia
+  (`ImGui::GetIO().WantCaptureMouse/WantCaptureKeyboard/WantTextInput`).
+  `WM_MOUSEWHEEL` podaje pozycję ekranową: przelicz ją do klienta. Kółko nad
+  panelami przewija panele, nie przybliża kamery. Usuń stare hooki edycji `WM_CHAR`.
+- `begin_ui_frame` ustawia kontekst renderera; buduj widgety bezpośrednio po nim.
+  `render` zamyka klatkę ImGui i rysuje UI po scenie, przed resolve. Nie wywołuj
+  dodatkowego `ImGui::Render()`/backendu Vulkan w edytorze. Jedno render/present
+  na klatkę; nie przeplataj kontekstów ani wątków w trakcie budowania layoutu.
+- Oryginalne `render(scene, camera, selected)` pozostaje dostępne, także jako
+  stary symbol DLL: bez UI, viewport na cały obraz. Gdy rozpoczęto UI frame,
+  również ten wariant go kończy. Headless UI działa przez ten sam render pass
+  i `pixels()`, lecz nie ma jeszcze linuksowego platform backendu GUI edytora.
+- Font Windows: `%WINDIR%/Fonts/segoeui.ttf`, bez kopiowania pliku do repo/paczki.
+  Zakres łaciński obejmuje polskie znaki, podstawową interpunkcję i strzałki.
+  Jeśli font jest niedostępny, używany jest wbudowany font ImGui (ograniczony
+  zestaw znaków). Brak shaping/bidi/CJK/emoji w tym etapie.
+- Atlas fontu powstaje raz na CPU z TTF (oversampling 3×2); to **nie jest**
+  bitmapa całego UI. Vulkan uploaduje atlas i rysuje glify jako teksturowane
+  trójkąty z filtrowaniem liniowym i alpha blending. Tekst, caret, zaznaczenia,
+  obramowania i kontrolki nie są malowane przez GDI.
+- MSAA jest wspólne dla sceny, gizma i UI. Silnik wybiera **4× → 2× → 1×**,
+  przecinając limity urządzenia z obsługą wybranych formatów koloru/głębokości.
+  Kolor wielopróbkowy i depth mają tyle samo próbek; resolve trafia do obrazu
+  jednoprąbkowego przed blitem/readbackiem. Bez wymogu `sampleRateShading`.
+  Rzeczywistą wartość zwraca `antialiasing_samples()`; tekst ma dodatkowo
+  pokrycie alpha atlasu, a kształty UI geometryczny antyaliasing ImGui.
+- `shutdown()` zwalnia backendy UI/font, kontekst i zasoby Vulkan po ukończeniu
+  GPU, przed zniszczeniem HWND. Kolejne `enable_ui()` tworzy czysty kontekst.
+- `ui_tests` wymaga sterownika Vulkan, ale nie pulpitu. Sprawdza piksele tekstu,
+  pokrycie AA, clipping/scissor, resolve MSAA, kliknięcie przycisku, wpisywanie
+  UTF-8, scroll, resize i ponowną inicjalizację. `platform_tests` nadal nie
+  wymaga GPU. CI Linux uruchamia wszystkie testy z dostępnym ICD Mesa.
+
+Zgodnie z podziałem pracy: kolejne zmiany layoutu są po stronie `src/editor/`,
+backend/atlas/render pass i publiczne API po stronie `src/engine/` + `include/engine/`.
+W tej zmianie integracja edytora jest wykonana za jednorazową zgodą na edycję
+wszystkich plików. Nie oznacza to przeniesienia logiki edytora do DLL silnika.

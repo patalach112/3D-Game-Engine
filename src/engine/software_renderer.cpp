@@ -15,6 +15,12 @@
 #include <vulkan/vulkan.h>
 #include "engine/render/vulkan_renderer.hpp"
 #include "scene_shaders.hpp"
+#include "engine/ui.hpp"
+#include "backends/imgui_impl_vulkan.h"
+#ifdef _WIN32
+#include "backends/imgui_impl_win32.h"
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
+#endif
 
 #include <algorithm>
 #include <array>
@@ -345,7 +351,10 @@ struct VulkanRenderer::Impl {
     VkPipelineLayout layout{};
     VkPipeline solid{}, wire{}, overlay_wire{}, overlay_solid{};
     VkFormat depth_format{};
-    struct Image { VkImage handle{}; VkDeviceMemory memory{}; VkImageView view{}; } color, depth;
+    VkSampleCountFlagBits samples{VK_SAMPLE_COUNT_1_BIT};
+    ImGuiContext* ui{};
+    bool ui_platform{}, ui_frame_open{};
+    struct Image { VkImage handle{}; VkDeviceMemory memory{}; VkImageView view{}; } color, depth, msaa;
     struct Buffer { VkBuffer handle{}; VkDeviceMemory memory{}; VkDeviceSize capacity{}; void* mapped{}; } vertices, readback;
     VkFramebuffer framebuffer{};
     int target_width{}, target_height{};
@@ -360,7 +369,8 @@ struct VulkanRenderer::Impl {
     void create_swapchain();
     std::uint32_t memory_type(std::uint32_t bits, VkMemoryPropertyFlags flags);
     void create_image(Image& image, int width, int height, VkFormat format,
-                      VkImageUsageFlags usage, VkImageAspectFlags aspect);
+                      VkImageUsageFlags usage, VkImageAspectFlags aspect,
+                      VkSampleCountFlagBits image_samples = VK_SAMPLE_COUNT_1_BIT);
     void destroy_buffer(Buffer& buffer) noexcept;
     void ensure_buffer(Buffer& buffer, VkDeviceSize size, VkBufferUsageFlags usage);
     void create_target(int width, int height);
@@ -368,7 +378,7 @@ struct VulkanRenderer::Impl {
     void begin();
     void submit(VkSemaphore wait = VK_NULL_HANDLE, VkSemaphore signal = VK_NULL_HANDLE);
     void draw(const FrameGeometry& frame, const EditorCamera& camera, int width, int height,
-              std::vector<std::uint32_t>& pixels);
+              std::vector<std::uint32_t>& pixels, RenderViewport scene_view, bool draw_ui);
     void present();
 };
 
@@ -524,27 +534,47 @@ void VulkanRenderer::Impl::init() {
         check(vkCreateSemaphore(device,&semaphore_info,nullptr,&acquired),"Create acquire semaphore");
     }
 
-    std::array<VkAttachmentDescription,2> attachments{};
+    // Intersect device limits AND the actual color/depth format capabilities.
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physical,&properties);
+    VkImageFormatProperties color_caps{}, depth_caps{};
+    check(vkGetPhysicalDeviceImageFormatProperties(physical,VK_FORMAT_R8G8B8A8_UNORM,
+        VK_IMAGE_TYPE_2D,VK_IMAGE_TILING_OPTIMAL,VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,0,&color_caps),"Query MSAA color support");
+    check(vkGetPhysicalDeviceImageFormatProperties(physical,depth_format,
+        VK_IMAGE_TYPE_2D,VK_IMAGE_TILING_OPTIMAL,VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,0,&depth_caps),"Query MSAA depth support");
+    const auto supported=properties.limits.framebufferColorSampleCounts
+        &properties.limits.framebufferDepthSampleCounts&color_caps.sampleCounts&depth_caps.sampleCounts;
+    if (supported&VK_SAMPLE_COUNT_4_BIT) samples=VK_SAMPLE_COUNT_4_BIT;
+    else if (supported&VK_SAMPLE_COUNT_2_BIT) samples=VK_SAMPLE_COUNT_2_BIT;
+    const bool resolve=samples!=VK_SAMPLE_COUNT_1_BIT;
+    std::array<VkAttachmentDescription,3> attachments{};
     attachments[0].format=VK_FORMAT_R8G8B8A8_UNORM;
-    attachments[0].samples=VK_SAMPLE_COUNT_1_BIT;
+    attachments[0].samples=samples;
     attachments[0].loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;
-    attachments[0].storeOp=VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[0].storeOp=resolve?VK_ATTACHMENT_STORE_OP_DONT_CARE:VK_ATTACHMENT_STORE_OP_STORE;
     attachments[0].stencilLoadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachments[0].stencilStoreOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachments[0].initialLayout=VK_IMAGE_LAYOUT_UNDEFINED;
-    attachments[0].finalLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    attachments[0].finalLayout=resolve?VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     attachments[1].format=depth_format;
-    attachments[1].samples=VK_SAMPLE_COUNT_1_BIT;
+    attachments[1].samples=samples;
     attachments[1].loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;
     attachments[1].storeOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachments[1].stencilLoadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachments[1].stencilStoreOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachments[1].initialLayout=VK_IMAGE_LAYOUT_UNDEFINED;
     attachments[1].finalLayout=VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    attachments[2]=attachments[0];
+    attachments[2].samples=VK_SAMPLE_COUNT_1_BIT;
+    attachments[2].loadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachments[2].storeOp=VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[2].finalLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    VkAttachmentReference resolve_ref{2,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     VkAttachmentReference color_ref{0,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     VkAttachmentReference depth_ref{1,VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint=VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.pResolveAttachments=resolve?&resolve_ref:nullptr;
     subpass.colorAttachmentCount=1; subpass.pColorAttachments=&color_ref; subpass.pDepthStencilAttachment=&depth_ref;
     std::array<VkSubpassDependency,2> dependencies{};
     dependencies[0].srcSubpass=VK_SUBPASS_EXTERNAL; dependencies[0].dstSubpass=0;
@@ -559,7 +589,7 @@ void VulkanRenderer::Impl::init() {
     dependencies[1].dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
     VkRenderPassCreateInfo pass_info{};
     pass_info.sType=VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    pass_info.attachmentCount=2; pass_info.pAttachments=attachments.data();
+    pass_info.attachmentCount=resolve?3:2; pass_info.pAttachments=attachments.data();
     pass_info.subpassCount=1; pass_info.pSubpasses=&subpass;
     pass_info.dependencyCount=2; pass_info.pDependencies=dependencies.data();
     check(vkCreateRenderPass(device,&pass_info,nullptr,&render_pass),"Create render pass");
@@ -615,7 +645,7 @@ VkPipeline VulkanRenderer::Impl::pipeline(VkPrimitiveTopology topology, bool dep
     raster.depthBiasEnable=topology==VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
     raster.depthBiasConstantFactor=-1;
     VkPipelineMultisampleStateCreateInfo multisample{};
-    multisample.sType=VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO; multisample.rasterizationSamples=VK_SAMPLE_COUNT_1_BIT;
+    multisample.sType=VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO; multisample.rasterizationSamples=samples;
     VkPipelineDepthStencilStateCreateInfo depth_state{};
     depth_state.sType=VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depth_state.depthTestEnable=depth_test; depth_state.depthWriteEnable=depth_write; depth_state.depthCompareOp=VK_COMPARE_OP_LESS_OR_EQUAL;
@@ -650,12 +680,13 @@ std::uint32_t VulkanRenderer::Impl::memory_type(std::uint32_t bits, VkMemoryProp
     throw std::runtime_error("No compatible Vulkan memory type");
 }
 void VulkanRenderer::Impl::create_image(Image& image, int width, int height, VkFormat format,
-                                        VkImageUsageFlags usage, VkImageAspectFlags aspect) {
+                                        VkImageUsageFlags usage, VkImageAspectFlags aspect,
+                                        VkSampleCountFlagBits image_samples) {
     VkImageCreateInfo info{};
     info.sType=VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     info.imageType=VK_IMAGE_TYPE_2D; info.extent={static_cast<std::uint32_t>(width),static_cast<std::uint32_t>(height),1};
     info.mipLevels=1; info.arrayLayers=1; info.format=format; info.tiling=VK_IMAGE_TILING_OPTIMAL;
-    info.initialLayout=VK_IMAGE_LAYOUT_UNDEFINED; info.usage=usage; info.samples=VK_SAMPLE_COUNT_1_BIT;
+    info.initialLayout=VK_IMAGE_LAYOUT_UNDEFINED; info.usage=usage; info.samples=image_samples;
     info.sharingMode=VK_SHARING_MODE_EXCLUSIVE;
     check(vkCreateImage(device,&info,nullptr,&image.handle),"Create render image");
     VkMemoryRequirements requirements{};
@@ -698,7 +729,7 @@ void VulkanRenderer::Impl::ensure_buffer(Buffer& buffer, VkDeviceSize size, VkBu
 void VulkanRenderer::Impl::destroy_target() noexcept {
     if (framebuffer) vkDestroyFramebuffer(device,framebuffer,nullptr);
     framebuffer=VK_NULL_HANDLE;
-    for (Image* image : {&color,&depth}) {
+    for (Image* image : {&color,&depth,&msaa}) {
         if (image->view) vkDestroyImageView(device,image->view,nullptr);
         if (image->handle) vkDestroyImage(device,image->handle,nullptr);
         if (image->memory) vkFreeMemory(device,image->memory,nullptr);
@@ -716,11 +747,14 @@ void VulkanRenderer::Impl::create_target(int width, int height) {
     destroy_target();
     create_image(color,width,height,VK_FORMAT_R8G8B8A8_UNORM,
                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT,VK_IMAGE_ASPECT_COLOR_BIT);
-    create_image(depth,width,height,depth_format,VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,VK_IMAGE_ASPECT_DEPTH_BIT);
-    const VkImageView attachments[]{color.view,depth.view};
+    create_image(depth,width,height,depth_format,VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,VK_IMAGE_ASPECT_DEPTH_BIT,samples);
+    const bool resolve=samples!=VK_SAMPLE_COUNT_1_BIT;
+    if (resolve) create_image(msaa,width,height,VK_FORMAT_R8G8B8A8_UNORM,
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,VK_IMAGE_ASPECT_COLOR_BIT,samples);
+    const VkImageView attachments[]{resolve?msaa.view:color.view,depth.view,color.view};
     VkFramebufferCreateInfo info{};
     info.sType=VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-    info.renderPass=render_pass; info.attachmentCount=2; info.pAttachments=attachments;
+    info.renderPass=render_pass; info.attachmentCount=resolve?3:2; info.pAttachments=attachments;
     info.width=static_cast<std::uint32_t>(width); info.height=static_cast<std::uint32_t>(height); info.layers=1;
     check(vkCreateFramebuffer(device,&info,nullptr,&framebuffer),"Create render framebuffer");
     target_width=width; target_height=height;
@@ -747,7 +781,8 @@ void VulkanRenderer::Impl::submit(VkSemaphore wait, VkSemaphore signal) {
     recording=false;
 }
 void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& camera,
-                                int width, int height, std::vector<std::uint32_t>& pixels) {
+                                int width, int height, std::vector<std::uint32_t>& pixels,
+                                RenderViewport scene_view, bool draw_ui) {
     create_target(width,height);
     const VkDeviceSize bytes=frame.vertices.size()*sizeof(Vertex);
     ensure_buffer(vertices,std::max(bytes,VkDeviceSize{1}),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
@@ -762,8 +797,10 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
     pass.renderArea.extent={static_cast<std::uint32_t>(width),static_cast<std::uint32_t>(height)};
     pass.clearValueCount=2; pass.pClearValues=clears.data();
     vkCmdBeginRenderPass(command,&pass,VK_SUBPASS_CONTENTS_INLINE);
-    VkViewport viewport{0,0,static_cast<float>(width),static_cast<float>(height),0,1};
-    VkRect2D scissor{{0,0},pass.renderArea.extent};
+    VkViewport viewport{static_cast<float>(scene_view.x),static_cast<float>(scene_view.y),
+        static_cast<float>(scene_view.width),static_cast<float>(scene_view.height),0,1};
+    VkRect2D scissor{{scene_view.x,scene_view.y},
+        {static_cast<std::uint32_t>(scene_view.width),static_cast<std::uint32_t>(scene_view.height)}};
     vkCmdSetViewport(command,0,1,&viewport); vkCmdSetScissor(command,0,1,&scissor);
     const VkDeviceSize offset=0;
     vkCmdBindVertexBuffers(command,0,1,&vertices.handle,&offset);
@@ -771,7 +808,7 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
     const auto vec4=[](Vec3 p) { return std::array<float,4>{p.x,p.y,p.z,0}; };
     const float scale=1.0F/std::tan(camera.vertical_fov_degrees*kPi/360.0F);
     const CameraPush push{vec4(basis.right),vec4(basis.up),vec4(basis.forward),vec4(camera.position),
-        {scale*static_cast<float>(height)/static_cast<float>(width),scale,kNearPlane,100000.0F}};
+        {scale*static_cast<float>(scene_view.height)/static_cast<float>(scene_view.width),scale,kNearPlane,100000.0F}};
     vkCmdPushConstants(command,layout,VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(push),&push);
     std::uint32_t first=0;
     const auto batch=[&](VkPipeline pipeline, std::uint32_t count) {
@@ -780,6 +817,8 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
     };
     batch(solid,frame.triangles); batch(wire,frame.lines);
     batch(overlay_wire,frame.overlay_lines); batch(overlay_solid,frame.overlay_triangles);
+    // UI/text shares the multisampled scene attachment, then one GPU resolve.
+    if (draw_ui) ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(),command);
     vkCmdEndRenderPass(command);
     if (!surface) {
         VkBufferImageCopy copy{};
@@ -948,6 +987,16 @@ void VulkanRenderer::Impl::present() {
 void VulkanRenderer::Impl::cleanup() noexcept {
     if (device) {
         vkDeviceWaitIdle(device);
+        if (ui) {
+            ImGui::SetCurrentContext(ui);
+            // Init may have thrown after registering partially created objects.
+            if (ImGui::GetIO().BackendRendererUserData) ImGui_ImplVulkan_Shutdown();
+#ifdef _WIN32
+            if (ui_platform) ImGui_ImplWin32_Shutdown();
+#endif
+            ImGui::DestroyContext(ui);
+            ui=nullptr;
+        }
         destroy_swapchain(); destroy_target(); destroy_buffer(vertices); destroy_buffer(readback);
         for (auto pipeline : {solid,wire,overlay_wire,overlay_solid}) if (pipeline) vkDestroyPipeline(device,pipeline,nullptr);
         if (layout) vkDestroyPipelineLayout(device,layout,nullptr);
@@ -981,17 +1030,122 @@ void VulkanRenderer::set_window(void* hinstance, void* hwnd) {
     impl_->hinstance=static_cast<HINSTANCE>(hinstance); impl_->hwnd=static_cast<HWND>(hwnd);
 }
 #endif
+void VulkanRenderer::enable_ui(float font_size) {
+    if (!std::isfinite(font_size) || font_size<8 || font_size>64)
+        throw std::invalid_argument("UI font size must be in [8,64]");
+    initialize();
+    if (impl_->ui) { ImGui::SetCurrentContext(impl_->ui); return; }
+    try {
+        IMGUI_CHECKVERSION();
+        impl_->ui=ImGui::CreateContext();
+        auto& io=ImGui::GetIO();
+        io.IniFilename=nullptr; // The editor owns layout persistence, no implicit CWD file.
+        io.ConfigFlags|=ImGuiConfigFlags_NavEnableKeyboard;
+        ImFontConfig font{};
+        font.OversampleH=3; font.OversampleV=2;
+        font.SizePixels=font_size;
+#ifdef _WIN32
+        // Read installed fonts, never redistribute Microsoft's font files.
+        wchar_t directory[MAX_PATH]{};
+        if (GetWindowsDirectoryW(directory,MAX_PATH)>0) {
+            const std::wstring path=std::wstring(directory)+L"\\Fonts\\segoeui.ttf";
+            const int bytes=WideCharToMultiByte(CP_UTF8,0,path.c_str(),-1,nullptr,0,nullptr,nullptr);
+            std::string utf8(static_cast<std::size_t>(bytes>0?bytes:1),'\0');
+            if (bytes>0) WideCharToMultiByte(CP_UTF8,0,path.c_str(),-1,utf8.data(),bytes,nullptr,nullptr);
+            static const ImWchar ranges[]{0x20,0x024F,0x2000,0x206F,0x2190,0x21FF,0};
+            if (GetFileAttributesW(path.c_str())!=INVALID_FILE_ATTRIBUTES)
+                io.Fonts->AddFontFromFileTTF(utf8.c_str(),font_size,&font,ranges);
+        }
+#endif
+        if (io.Fonts->Fonts.empty()) io.Fonts->AddFontDefault(&font);
+        auto& style=ImGui::GetStyle();
+        ImGui::StyleColorsDark();
+        style.AntiAliasedLines=true; style.AntiAliasedLinesUseTex=true;
+        style.AntiAliasedFill=true;
+        style.WindowRounding=0; style.ChildRounding=6; style.FrameRounding=5;
+        style.GrabRounding=4; style.ScrollbarRounding=5;
+        style.WindowPadding={14,12}; style.FramePadding={9,7}; style.ItemSpacing={8,8};
+        style.Colors[ImGuiCol_WindowBg]={0.065F,0.075F,0.095F,1};
+        style.Colors[ImGuiCol_ChildBg]={0.08F,0.09F,0.115F,1};
+        style.Colors[ImGuiCol_FrameBg]={0.115F,0.13F,0.16F,1};
+        style.Colors[ImGuiCol_Button]={0.15F,0.18F,0.23F,1};
+        style.Colors[ImGuiCol_ButtonHovered]={0.21F,0.31F,0.40F,1};
+        style.Colors[ImGuiCol_ButtonActive]={0.12F,0.40F,0.49F,1};
+        style.Colors[ImGuiCol_Header]={0.12F,0.30F,0.36F,1};
+        style.Colors[ImGuiCol_CheckMark]={0.31F,0.85F,0.79F,1};
+        style.Colors[ImGuiCol_SliderGrab]={0.31F,0.85F,0.79F,1};
+        style.Colors[ImGuiCol_TextSelectedBg]={0.15F,0.50F,0.58F,0.6F};
+        ImGui_ImplVulkan_InitInfo info{};
+        info.ApiVersion=VK_API_VERSION_1_1; info.Instance=impl_->instance;
+        info.PhysicalDevice=impl_->physical; info.Device=impl_->device;
+        info.QueueFamily=impl_->graphics_family; info.Queue=impl_->graphics_queue;
+        info.RenderPass=impl_->render_pass; info.MinImageCount=2; info.ImageCount=2;
+        info.MSAASamples=impl_->samples; info.DescriptorPoolSize=32;
+        info.CheckVkResultFn=[](VkResult result) { check(result,"Vulkan UI backend"); };
+        if (!ImGui_ImplVulkan_Init(&info)) throw std::runtime_error("Initialize Vulkan UI backend");
+#ifdef _WIN32
+        if (impl_->hwnd) {
+            if (!ImGui_ImplWin32_Init(impl_->hwnd)) throw std::runtime_error("Initialize Win32 UI input");
+            impl_->ui_platform=true;
+        }
+#endif
+    } catch (...) { shutdown(); throw; }
+}
+void VulkanRenderer::begin_ui_frame(float delta_seconds) {
+    if (!std::isfinite(delta_seconds) || delta_seconds<=0)
+        throw std::invalid_argument("UI delta time must be positive and finite");
+    if (!impl_ || !impl_->ui) throw std::logic_error("Call enable_ui before begin_ui_frame");
+    if (impl_->ui_frame_open) throw std::logic_error("Finish the UI frame with render before beginning another");
+    ImGui::SetCurrentContext(impl_->ui);
+    ImGui_ImplVulkan_NewFrame();
+#ifdef _WIN32
+    if (impl_->ui_platform) ImGui_ImplWin32_NewFrame();
+#endif
+    auto& io=ImGui::GetIO();
+    io.DisplaySize={static_cast<float>(width_),static_cast<float>(height_)};
+    io.DeltaTime=delta_seconds;
+    ImGui::NewFrame();
+    impl_->ui_frame_open=true;
+}
+#ifdef _WIN32
+bool VulkanRenderer::handle_ui_message(void* window, unsigned int message,
+                                      std::uintptr_t wparam, std::intptr_t lparam) {
+    if (!impl_ || !impl_->ui || !impl_->ui_platform) return false;
+    ImGui::SetCurrentContext(impl_->ui);
+    return ImGui_ImplWin32_WndProcHandler(static_cast<HWND>(window),message,
+        static_cast<WPARAM>(wparam),static_cast<LPARAM>(lparam))!=0;
+}
+#endif
+unsigned int VulkanRenderer::antialiasing_samples() const noexcept {
+    return impl_?static_cast<unsigned int>(impl_->samples):1;
+}
 void VulkanRenderer::resize(int width, int height) {
     width_=std::max(1,width); height_=std::max(1,height);
 }
 void VulkanRenderer::render(const Scene& scene, const EditorCamera& camera, EntityId selected) {
+    render(scene,camera,selected,{});
+}
+void VulkanRenderer::render(const Scene& scene, const EditorCamera& camera, EntityId selected,
+                            RenderViewport viewport) {
     if (!finite(camera.position) || !finite(camera.target) || !std::isfinite(camera.vertical_fov_degrees)
         || camera.vertical_fov_degrees<=0 || camera.vertical_fov_degrees>=179)
         throw std::invalid_argument("Invalid camera position/target/FOV");
+    if (viewport.x==0 && viewport.y==0 && viewport.width==0 && viewport.height==0)
+        viewport={0,0,width_,height_};
+    if (viewport.x<0 || viewport.y<0 || viewport.width<=0 || viewport.height<=0
+        || viewport.width>width_ || viewport.height>height_
+        || viewport.x>width_-viewport.width || viewport.y>height_-viewport.height)
+        throw std::invalid_argument("Scene viewport must fit inside the render target");
     initialize();
     try {
-        const auto frame=scene_geometry(scene,camera,selected,width_,height_);
-        impl_->draw(frame,camera,width_,height_,pixels_);
+        const bool draw_ui=impl_->ui_frame_open;
+        if (draw_ui) {
+            ImGui::SetCurrentContext(impl_->ui);
+            ImGui::Render();
+            impl_->ui_frame_open=false;
+        }
+        const auto frame=scene_geometry(scene,camera,selected,viewport.width,viewport.height);
+        impl_->draw(frame,camera,width_,height_,pixels_,viewport,draw_ui);
     } catch (...) { shutdown(); throw; }
 }
 void VulkanRenderer::present() {
