@@ -53,11 +53,15 @@ public:
 #ifdef _WIN32
     // Call before initialize(). The caller owns both native handles.
     void set_window(void* hinstance, void* hwnd);
+    void set_external_mouse_capture(bool enabled);
 #endif
     // UI state/backends live in the engine DLL. Native Win32 input is forwarded
     // through handle_ui_message(); headless callers feed ImGuiIO directly.
     void enable_ui(float font_size = 17.0F);
     void begin_ui_frame(float delta_seconds = 1.0F / 60.0F);
+    // Finalize on the UI/window thread before handing exclusive ownership to a
+    // render worker. No frontend renderer/ImGui access until that worker finishes.
+    void finish_ui_frame();
 #ifdef _WIN32
     bool handle_ui_message(void* hwnd, unsigned int message,
                            std::uintptr_t wparam, std::intptr_t lparam);

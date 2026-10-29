@@ -8,7 +8,6 @@ namespace editor {
 
 App& app() {
     static App instance;
-    LOG_DEBUG("editor", "App initialized");
     return instance;
 }
 
@@ -43,14 +42,8 @@ engine::Vec3 normalized(engine::Vec3 a) {
 
 void update_camera() {
     App& g = app();
-    LOG_DEBUG("camera", "Yaw=%.2f Pitch=%.2f Dist=%.2f", g.yaw, g.pitch, g.camera_distance);
-    const auto& target = g.camera.target;
-    const float cp = std::cos(g.pitch);
-    g.camera.position = {
-        target.x + g.camera_distance * cp * std::sin(g.yaw),
-        target.y + g.camera_distance * std::sin(g.pitch),
-        target.z + g.camera_distance * cp * std::cos(g.yaw)
-    };
+    engine::apply_orbit(g.camera,g.orbit);
+    g.displayed_orbit=g.orbit;
 }
 
 void update_layout() {

@@ -21,6 +21,19 @@ bool update_orbit(OrbitState& s,const OrbitInput& i,RenderViewport v) {
     }
     return changed;
 }
+void smooth_orbit(OrbitState& displayed,const OrbitState& target,float dt,float response) {
+    if (!std::isfinite(dt)||dt<0||!std::isfinite(response)||response<=0)
+        throw std::invalid_argument("Invalid camera smoothing interval/response");
+    if (!std::isfinite(target.yaw)||!std::isfinite(target.pitch)||!std::isfinite(target.distance)||target.distance<=0
+        ||!std::isfinite(displayed.yaw)||!std::isfinite(displayed.pitch)||!std::isfinite(displayed.distance)||displayed.distance<=0)
+        throw std::invalid_argument("Invalid smoothed orbit state");
+    const double alpha=-std::expm1(-static_cast<double>(response)*dt);
+    constexpr double tau=6.283185307179586;
+    displayed.yaw=static_cast<float>(std::remainder(displayed.yaw+
+        std::remainder(static_cast<double>(target.yaw)-displayed.yaw,tau)*alpha,tau));
+    displayed.pitch=static_cast<float>(displayed.pitch+(static_cast<double>(target.pitch)-displayed.pitch)*alpha);
+    displayed.distance=static_cast<float>(displayed.distance+(static_cast<double>(target.distance)-displayed.distance)*alpha);
+}
 void apply_orbit(EditorCamera& camera,const OrbitState& s) {
     if (!std::isfinite(s.yaw)||!std::isfinite(s.pitch)||!std::isfinite(s.distance)||s.distance<=0)
         throw std::invalid_argument("Invalid orbit state");

@@ -2,3 +2,5 @@ EXPORTS
     createheap
     freeheap
     WindowResizedCallback
+    engine_input_push
+    engine_input_pop

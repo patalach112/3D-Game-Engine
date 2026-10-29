@@ -10,6 +10,8 @@
 #include "engine/render/vulkan_renderer.hpp"
 #include "engine/ui.hpp"
 #include "engine/camera_controller.hpp"
+#include "engine/input.hpp"
+#include "engine/render/render_worker.hpp"
 #include <string>
 
 namespace editor {
@@ -24,7 +26,13 @@ struct App {
     bool ready{}, renderer_failed{};
     int width{1280}, height{800};
     int left_width{250}, right_width{320}, bottom_height{180};
-    engine::OrbitState orbit;
+    engine::OrbitState orbit, displayed_orbit;
+    engine::OrbitInput orbit_input;
+    std::vector<engine::OrbitInput> orbit_events;
+    std::unique_ptr<engine::InputProcessor> inputs;
+    std::unique_ptr<engine::RenderWorker> render_worker;
+    bool close_requested{}, minimized{};
+    unsigned native_buttons{};
     int drag_axis{-1};
     float drag_sign{1.0F};
     engine::Vec3 drag_start_position{};
@@ -58,6 +66,9 @@ void update_layout();
 RECT view_rect();
 void draw_ui();
 void render_frame(HWND hwnd);
+void reset_frame_timing();
+void apply_input_event(HWND hwnd,const engine::InputEvent& event);
+constexpr UINT kWorkerWake=WM_APP+1;
 void save_scene();
 void add_primitive(engine::PrimitiveType type);
 void duplicate_entity();

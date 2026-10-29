@@ -343,3 +343,14 @@ fokusu są obsługiwane jawnie. Dokładny ABI, pakowanie half/normalnej/rotacji,
 przykłady API, wymagania urządzenia i zasady współdzielenia bufora opisuje
 [dokumentacja obiektów](docs/objects.md). Testy CPU: geometry_tests; testy
 GPU shared-buffer/culling: geometry_gpu_tests.
+
+## Pętla bez limitu FPS i wątki
+
+Edytor Windows renderuje ciągle, bez timera 16 ms; swapchain preferuje IMMEDIATE
+(z możliwym tearingiem), a jeśli sterownik go nie udostępnia — MAILBOX/FIFO.
+Obrót i zoom kamery korzystają z tłumienia zależnego od czasu, nie od FPS.
+Input przechodzi przez kolejkę SPSC w `src/engine/input_queue.asm` do osobnego
+wątku w `src/engine/input.cpp`. Osobny worker przygotowuje geometrię, nagrywa
+polecenia Vulkan i prezentuje klatki; okno i UI pozostają na wątku właściciela HWND.
+Zasady własności, affinity, przepełnienia kolejki i testy:
+[dokumentacja wielowątkowości](docs/threading.md).
