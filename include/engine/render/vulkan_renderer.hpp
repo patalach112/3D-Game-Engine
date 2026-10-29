@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/export.hpp"
+
 #include "engine/scene/scene.hpp"
 
 #include <cstdint>
@@ -27,15 +29,15 @@ struct Ray3 {
     Vec3 direction{};
 };
 
-[[nodiscard]] ScreenPoint project_to_screen(Vec3 world, const EditorCamera& camera,
+[[nodiscard]] ENGINE_API ScreenPoint project_to_screen(Vec3 world, const EditorCamera& camera,
                                            int width, int height);
-[[nodiscard]] Ray3 screen_ray(float x, float y, const EditorCamera& camera,
+[[nodiscard]] ENGINE_API Ray3 screen_ray(float x, float y, const EditorCamera& camera,
                              int width, int height);
 
 // Vulkan rasterization, clipping, shading and depth testing. No CPU rasterizer.
 // With a Win32 target, present() copies the GPU image to a Vulkan swapchain.
 // Without a window, render() reads it back as 0x00RRGGBB for tests/PPM/terminal.
-class VulkanRenderer {
+class ENGINE_API VulkanRenderer {
 public:
     VulkanRenderer();
     ~VulkanRenderer();
