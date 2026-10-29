@@ -49,7 +49,6 @@ void update_camera() {
         target.y + g.camera_distance * std::sin(g.pitch),
         target.z + g.camera_distance * cp * std::cos(g.yaw)
     };
-    g.scene_dirty = true;
 }
 
 void update_layout() {

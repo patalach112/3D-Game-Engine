@@ -1,56 +1,41 @@
 #include "editor_app.hpp"
-
 #include <algorithm>
+#include <exception>
+#include <chrono>
 
 namespace editor {
-
 void render_frame(HWND hwnd) {
-    App& g = app();
-    RECT client{};
-    GetClientRect(hwnd, &client);
-    const int wanted_width = std::max(1L, client.right);
-    const int wanted_height = std::max(1L, client.bottom);
-    if (wanted_width != g.width || wanted_height != g.height) {
-        g.width = wanted_width;
-        g.height = wanted_height;
+    PAINTSTRUCT paint{};
+    BeginPaint(hwnd,&paint); // Validate damage only: no GDI drawing or bitmap copies.
+    auto& g=app();
+    try {
+        if (g.ready && !g.renderer_failed && !IsIconic(hwnd)) {
+            RECT client{}; GetClientRect(hwnd,&client);
+            g.width=static_cast<int>(std::max(1L,client.right));
+            g.height=static_cast<int>(std::max(1L,client.bottom));
+            update_layout();
+            const auto now=std::chrono::steady_clock::now();
+            static auto previous=now;
+            const float delta=std::clamp(std::chrono::duration<float>(now-previous).count(),0.001F,0.1F);
+            previous=now;
+            g.renderer.begin_ui_frame(delta);
+            draw_ui();
+            update_camera();
+            const auto view=view_rect();
+            g.renderer.render(g.scene,g.camera,g.selected,
+                {static_cast<int>(view.left),static_cast<int>(view.top),
+                 static_cast<int>(view.right-view.left),static_cast<int>(view.bottom-view.top)});
+            g.renderer.present();
+        }
+        EndPaint(hwnd,&paint);
+    } catch (const std::exception& error) {
+        EndPaint(hwnd,&paint);
+        g.renderer_failed=true;
+        g.ready=false;
+        g.renderer.shutdown();
+        KillTimer(hwnd,1);
+        MessageBoxA(hwnd,error.what(),"Vulkan renderer error",MB_OK|MB_ICONERROR);
+        PostMessageW(hwnd,WM_CLOSE,0,0);
     }
-
-    // Upewnia się, że rozmiar renderera odpowiada aktualnym szerokościom paneli.
-    // Przeciąganie separatora zmienia widok, ale nie rozmiar okna.
-    update_layout();
-
-    // Jeśli widok się nie zmienił, nie ponawiamy wyciążającej rasteryzacji.
-    if (g.scene_dirty) {
-        update_camera();
-        g.renderer.render(g.scene, g.camera, g.selected);
-        g.scene_dirty = false;
-    }
-
-    const RECT viewport = view_rect();
-    const int view_width = std::max(1, static_cast<int>(viewport.right - viewport.left));
-    const int view_height = std::max(1, static_cast<int>(viewport.bottom - viewport.top));
-
-    PAINTSTRUCT ps{};
-    HDC window_dc = BeginPaint(hwnd, &ps);
-
-    // Scena trafia prosto na urządzenie. Stary czas przepisywał scenę do bufora
-    // pełnowymiarowego, potem StretchDIBits i BitBlt robili po kolejnej kopie.
-    BITMAPINFO info{};
-    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    info.bmiHeader.biWidth = view_width;
-    info.bmiHeader.biHeight = -view_height; // Ujemny => pierwszy wiersz to góra.
-    info.bmiHeader.biPlanes = 1;
-    info.bmiHeader.biBitCount = 32;
-    info.bmiHeader.biCompression = BI_RGB;
-    // BiHeight ujemny => DIB jest top-down, a xSrc/ySrc/StartScan/cLines są
-    // ignorowane. SetDIBitsToDevice nie przyjmuje raster op (SRCCOPY to
-    // raster op BitBlt); jej ostatni parametr to ColorUse.
-    SetDIBitsToDevice(window_dc, viewport.left, viewport.top, view_width, view_height,
-                      0, 0, 0, view_height,
-                      g.renderer.pixels().data(), &info, DIB_RGB_COLORS);
-
-    draw_ui(window_dc);
-    EndPaint(hwnd, &ps);
 }
-
 } // namespace editor

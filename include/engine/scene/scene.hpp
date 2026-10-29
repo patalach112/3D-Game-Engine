@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/export.hpp"
+
 #include "engine/math/vec3.hpp"
 
 #include <cstdint>
@@ -30,7 +32,7 @@ struct Entity {
     Transform transform{};
 };
 
-class Scene {
+class ENGINE_API Scene {
 public:
     [[nodiscard]] Entity& create_entity(std::string name, PrimitiveType primitive = PrimitiveType::Cube);
     [[nodiscard]] Entity* find_entity(EntityId id);
