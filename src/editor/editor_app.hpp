@@ -27,8 +27,17 @@ struct App {
     bool orbiting{};
     POINT last_mouse{};
     int drag_axis{-1};
-    float drag_sign{1};
-    engine::Vec3 drag_start_position{}, drag_start_hit{}, drag_plane_normal{};
+    float drag_sign{1.0F};
+    engine::Vec3 drag_start_position{};
+    engine::Vec3 drag_start_hit{};
+    engine::Vec3 drag_plane_normal{};
+    POINT drag_start_mouse{};
+
+    // Tryb gizma: 0=pozycja, 1=obrót, 2=skala.
+    int gizmo_mode{0};
+    // Wskaźnik do przeciągania przy wyborze typu primitywu.
+    bool dragging_type_selector{false};
+
     std::wstring status{L"Gotowe"};
     char search[128]{};
     char entity_name[512]{};
@@ -50,8 +59,15 @@ void draw_ui();
 void render_frame(HWND hwnd);
 void save_scene();
 void add_primitive(engine::PrimitiveType type);
-bool ray_plane(engine::Ray3 ray,engine::Vec3 point,engine::Vec3 normal,engine::Vec3& hit);
-bool ray_box(engine::Ray3 ray,const engine::Entity& entity,float& distance);
-bool hit_gizmo(int sx,int sy,int view_w,int view_h,engine::Entity& entity);
-LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp);
+void duplicate_entity();
+void frame_selected();
+void snap_camera(int view); // 0=front, 1=top, 2=side, 3=iso
+bool ray_plane(engine::Ray3 ray, engine::Vec3 point, engine::Vec3 normal, engine::Vec3& hit);
+bool ray_box(engine::Ray3 ray, const engine::Entity& entity, float& distance);
+bool hit_gizmo(int sx, int sy, int view_w, int view_h, engine::Entity& entity);
+int gizmo_hit(int sx, int sy, int view_w, int view_h, engine::Entity& entity);
+
+// Procedurowa procedura okna.
+LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp);
+
 } // namespace editor
