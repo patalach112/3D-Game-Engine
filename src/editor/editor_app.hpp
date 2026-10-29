@@ -9,6 +9,7 @@
 #include <windowsx.h>
 #include "engine/render/vulkan_renderer.hpp"
 #include "engine/ui.hpp"
+#include "engine/camera_controller.hpp"
 #include <string>
 
 namespace editor {
@@ -23,9 +24,7 @@ struct App {
     bool ready{}, renderer_failed{};
     int width{1280}, height{800};
     int left_width{250}, right_width{320}, bottom_height{180};
-    float yaw{0.75F}, pitch{0.42F}, camera_distance{8};
-    bool orbiting{};
-    POINT last_mouse{};
+    engine::OrbitState orbit;
     int drag_axis{-1};
     float drag_sign{1};
     engine::Vec3 drag_start_position{}, drag_start_hit{}, drag_plane_normal{};

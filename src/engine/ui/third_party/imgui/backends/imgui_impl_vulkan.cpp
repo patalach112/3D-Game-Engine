@@ -87,6 +87,7 @@
 #include "imgui.h"
 #ifndef IMGUI_DISABLE
 #include "imgui_impl_vulkan.h"
+#include "engine/objects.hpp"
 #include <stdio.h>
 #ifndef IM_MAX
 #define IM_MAX(A, B)    (((A) >= (B)) ? (A) : (B))
@@ -243,6 +244,8 @@ struct ImGui_ImplVulkan_Data
     VkShaderModule              ShaderModuleVert;
     VkShaderModule              ShaderModuleFrag;
     VkDescriptorPool            DescriptorPool;
+    VkBuffer SharedBuffer, SharedUV;
+    VkDeviceSize SharedVertices, SharedIndices;
 
     // Texture management
     ImGui_ImplVulkan_Texture    FontTexture;
@@ -455,10 +458,17 @@ static void ImGui_ImplVulkan_SetupRenderState(ImDrawData* draw_data, VkPipeline 
     // Bind Vertex And Index Buffer:
     if (draw_data->TotalVtxCount > 0)
     {
+        if (bd->VulkanInitInfo.SharedGeometry) {
+            VkBuffer buffers[]{bd->SharedBuffer,bd->SharedUV};
+            VkDeviceSize offsets[]{bd->SharedVertices,0};
+            vkCmdBindVertexBuffers(command_buffer,0,2,buffers,offsets);
+            vkCmdBindIndexBuffer(command_buffer,bd->SharedBuffer,bd->SharedIndices,VK_INDEX_TYPE_UINT32);
+        } else {
         VkBuffer vertex_buffers[1] = { rb->VertexBuffer };
         VkDeviceSize vertex_offset[1] = { 0 };
         vkCmdBindVertexBuffers(command_buffer, 0, 1, vertex_buffers, vertex_offset);
         vkCmdBindIndexBuffer(command_buffer, rb->IndexBuffer, 0, sizeof(ImDrawIdx) == 2 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
+        }
     }
 
     // Setup viewport:
@@ -485,6 +495,12 @@ static void ImGui_ImplVulkan_SetupRenderState(ImDrawData* draw_data, VkPipeline 
         vkCmdPushConstants(command_buffer, bd->PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, sizeof(float) * 0, sizeof(float) * 2, scale);
         vkCmdPushConstants(command_buffer, bd->PipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, sizeof(float) * 2, sizeof(float) * 2, translate);
     }
+}
+
+void ImGui_ImplVulkan_SetSharedGeometry(VkBuffer geometry,VkDeviceSize vertices,VkDeviceSize indices,VkBuffer uv)
+{
+    auto* bd=ImGui_ImplVulkan_GetBackendData();
+    bd->SharedBuffer=geometry; bd->SharedVertices=vertices; bd->SharedIndices=indices; bd->SharedUV=uv;
 }
 
 // Render function
@@ -514,7 +530,7 @@ void ImGui_ImplVulkan_RenderDrawData(ImDrawData* draw_data, VkCommandBuffer comm
     wrb->Index = (wrb->Index + 1) % wrb->Count;
     ImGui_ImplVulkan_FrameRenderBuffers* rb = &wrb->FrameRenderBuffers[wrb->Index];
 
-    if (draw_data->TotalVtxCount > 0)
+    if (draw_data->TotalVtxCount > 0 && !v->SharedGeometry)
     {
         // Create or resize the vertex/index buffers
         VkDeviceSize vertex_size = AlignBufferSize(draw_data->TotalVtxCount * sizeof(ImDrawVert), bd->BufferMemoryAlignment);
@@ -887,7 +903,7 @@ static void ImGui_ImplVulkan_CreatePipeline(VkDevice device, const VkAllocationC
     stage[1].module = bd->ShaderModuleFrag;
     stage[1].pName = "main";
 
-    VkVertexInputBindingDescription binding_desc[1] = {};
+    VkVertexInputBindingDescription binding_desc[2] = {};
     binding_desc[0].stride = sizeof(ImDrawVert);
     binding_desc[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
@@ -905,9 +921,17 @@ static void ImGui_ImplVulkan_CreatePipeline(VkDevice device, const VkAllocationC
     attribute_desc[2].format = VK_FORMAT_R8G8B8A8_UNORM;
     attribute_desc[2].offset = offsetof(ImDrawVert, col);
 
+    if (bd->VulkanInitInfo.SharedGeometry) {
+        binding_desc[0].stride=sizeof(engine::Vertex_hud);
+        binding_desc[1]={1,sizeof(engine::Vec2),VK_VERTEX_INPUT_RATE_VERTEX};
+        attribute_desc[0].offset=offsetof(engine::Vertex_hud,pos);
+        attribute_desc[1].binding=1; attribute_desc[1].offset=0;
+        attribute_desc[2].format=VK_FORMAT_R32G32B32A32_SFLOAT;
+        attribute_desc[2].offset=offsetof(engine::Vertex_hud,color);
+    }
     VkPipelineVertexInputStateCreateInfo vertex_info = {};
     vertex_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertex_info.vertexBindingDescriptionCount = 1;
+    vertex_info.vertexBindingDescriptionCount = bd->VulkanInitInfo.SharedGeometry ? 2 : 1;
     vertex_info.pVertexBindingDescriptions = binding_desc;
     vertex_info.vertexAttributeDescriptionCount = 3;
     vertex_info.pVertexAttributeDescriptions = attribute_desc;

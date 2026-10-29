@@ -137,7 +137,7 @@ void draw_ui() {
     ImGui::SameLine(215);
     if (ImGui::Button("Zapisz scenę")) save_scene();
     ImGui::SameLine();
-    if (ImGui::Button("Reset kamery")) { g.yaw=0.75F;g.pitch=0.42F;g.camera_distance=8; }
+    if (ImGui::Button("Reset kamery")) { g.orbit={}; }
     ImGui::SameLine();
     ImGui::TextDisabled("VULKAN  |  %u× MSAA  |  Perspektywa",g.renderer.antialiasing_samples());
     ImGui::End();

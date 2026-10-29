@@ -7,7 +7,8 @@ namespace {
 bool over_scene(HWND hwnd,LPARAM lp) {
     POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};
     return app().ready && PtInRect(&app().viewport_bounds,p)
-        && !ImGui::GetIO().WantCaptureMouse && GetActiveWindow()==hwnd;
+        && !ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel)
+        && GetActiveWindow()==hwnd;
 }
 }
 LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
@@ -44,30 +45,16 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
             }
             g.selected=hit;
         }
-        SetCapture(hwnd); return 0;
+        return 0; // Win32 ImGui backend already maintains per-button capture.
     }
     case WM_LBUTTONUP:
         g.drag_axis=-1;
-        if (!g.orbiting && GetCapture()==hwnd) ReleaseCapture();
         return 0;
     case WM_RBUTTONDOWN:
-        if (over_scene(hwnd,lp)) {
-            g.orbiting=true;
-            g.last_mouse={GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};
-            SetCapture(hwnd);
-        }
-        return 0;
-    case WM_RBUTTONUP:
-        g.orbiting=false;
-        if (GetCapture()==hwnd) ReleaseCapture();
-        return 0;
+    case WM_RBUTTONUP: return 0; // Orbit input is consumed after ImGui::NewFrame.
     case WM_MOUSEMOVE: {
         const int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
-        if (g.orbiting) {
-            g.yaw-=static_cast<float>(x-g.last_mouse.x)*0.006F;
-            g.pitch=std::clamp(g.pitch+static_cast<float>(y-g.last_mouse.y)*0.006F,-1.4F,1.4F);
-            g.last_mouse={x,y}; update_camera();
-        } else if (g.drag_axis>=0 && (wp&MK_LBUTTON)) {
+        if (g.drag_axis>=0 && (wp&MK_LBUTTON)) {
             const auto view=view_rect();
             const auto ray=engine::screen_ray(static_cast<float>(x-view.left),static_cast<float>(y-view.top),
                 g.camera,static_cast<int>(view.right-view.left),static_cast<int>(view.bottom-view.top));
@@ -80,20 +67,12 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
         }
         return 0;
     }
-    case WM_MOUSEWHEEL: {
-        POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};
-        ScreenToClient(hwnd,&point); // WM_MOUSEWHEEL coordinates are screen-relative.
-        if (g.ready && PtInRect(&g.viewport_bounds,point) && !ImGui::GetIO().WantCaptureMouse) {
-            g.camera_distance=std::clamp(g.camera_distance-static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp))/120*0.7F,2.0F,40.0F);
-            update_camera();
-        }
-        return 0; // Over a panel, the queued ImGui wheel event scrolls that panel only.
-    }
+    case WM_MOUSEWHEEL: return 0; // Current-frame input routes scroll vs camera zoom.
     case WM_KEYDOWN: return 0; // App shortcuts are routed after the UI has consumed keys.
     case WM_CHAR: return 0; // Already queued by ImGui's Win32 backend.
     case WM_KILLFOCUS:
     case WM_CAPTURECHANGED:
-        g.orbiting=false; g.drag_axis=-1; return 0;
+        g.orbit.dragging=false; g.drag_axis=-1; return 0;
     case WM_CLOSE:
         KillTimer(hwnd,1); g.ready=false;
         // Release Vulkan surface and UI resources before destroying their HWND.
