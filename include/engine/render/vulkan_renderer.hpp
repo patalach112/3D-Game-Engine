@@ -24,6 +24,11 @@ struct ScreenPoint {
     bool visible{};
 };
 
+// Pixel rectangle inside the full client-area render target.
+struct RenderViewport {
+    int x{}, y{}, width{}, height{};
+};
+
 struct Ray3 {
     Vec3 origin{};
     Vec3 direction{};
@@ -48,12 +53,24 @@ public:
     // Call before initialize(). The caller owns both native handles.
     void set_window(void* hinstance, void* hwnd);
 #endif
+    // UI state/backends live in the engine DLL. Native Win32 input is forwarded
+    // through handle_ui_message(); headless callers feed ImGuiIO directly.
+    void enable_ui(float font_size = 17.0F);
+    void begin_ui_frame(float delta_seconds = 1.0F / 60.0F);
+#ifdef _WIN32
+    bool handle_ui_message(void* hwnd, unsigned int message,
+                           std::uintptr_t wparam, std::intptr_t lparam);
+#endif
+    [[nodiscard]] unsigned int antialiasing_samples() const noexcept;
     void initialize();
     void shutdown() noexcept;
     void resize(int width, int height);
     // Win32: records a scene pass; present() submits it together with the blit.
     // Headless: submits and waits for pixel readback before returning.
+    // Preserve the original whole-target entry point for existing DLL consumers.
     void render(const Scene& scene, const EditorCamera& camera, EntityId selected);
+    void render(const Scene& scene, const EditorCamera& camera, EntityId selected,
+                RenderViewport viewport);
     void present();
 
     [[nodiscard]] int width() const noexcept { return width_; }

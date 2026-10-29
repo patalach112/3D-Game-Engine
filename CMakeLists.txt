@@ -69,9 +69,16 @@ add_library(engine_core SHARED
     ${ENGINE_PLATFORM_SOURCE}
     src/engine/scene.cpp
     src/engine/software_renderer.cpp
+    src/engine/ui/third_party/imgui/imgui.cpp
+    src/engine/ui/third_party/imgui/imgui_draw.cpp
+    src/engine/ui/third_party/imgui/imgui_tables.cpp
+    src/engine/ui/third_party/imgui/imgui_widgets.cpp
+    src/engine/ui/third_party/imgui/backends/imgui_impl_vulkan.cpp
     "${SHADER_DIR}/scene_shaders.hpp"
 )
 target_include_directories(engine_core PUBLIC include PRIVATE "${SHADER_DIR}")
+# One ImGui implementation in the shared engine; consumers use the same ABI/config.
+target_include_directories(engine_core SYSTEM PUBLIC src/engine/ui/third_party/imgui)
 target_link_libraries(engine_core PRIVATE Vulkan::Vulkan)
 target_compile_definitions(engine_core PRIVATE ENGINE_BUILD_DLL)
 set_target_properties(engine_core PROPERTIES OUTPUT_NAME engine
@@ -85,7 +92,8 @@ if(ENGINE_USE_ASM)
 endif()
 if(WIN32)
     set_target_properties(engine_core PROPERTIES PREFIX "")
-    target_link_libraries(engine_core PRIVATE user32)
+    target_sources(engine_core PRIVATE src/engine/ui/third_party/imgui/backends/imgui_impl_win32.cpp)
+    target_link_libraries(engine_core PRIVATE user32 gdi32 dwmapi imm32)
 else()
     option(ENGINE_LINUX_X11 "Build native Linux windows using X11/XWayland" ON)
     if(ENGINE_LINUX_X11)
@@ -114,7 +122,6 @@ if(WIN32)
     add_executable(engine_editor WIN32
         src/editor/main.cpp
         src/editor/app.cpp
-        src/editor/ui_gdi.cpp
         src/editor/ui.cpp
         src/editor/render.cpp
         src/editor/scene_io.cpp
@@ -122,7 +129,7 @@ if(WIN32)
         src/editor/gizmo.cpp
         src/editor/window.cpp
     )
-    target_link_libraries(engine_editor PRIVATE engine_core user32 gdi32)
+    target_link_libraries(engine_editor PRIVATE engine_core user32)
     target_compile_definitions(engine_editor PRIVATE UNICODE _UNICODE)
     if(MINGW)
         # MinGW needs this option to use the Unicode wWinMain entry point.
@@ -130,6 +137,8 @@ if(WIN32)
     endif()
     if(MSVC)
         target_compile_options(engine_editor PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(engine_editor PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 else()
     # Headless Linux build uses the same Vulkan renderer with GPU image readback.
@@ -155,6 +164,14 @@ if(BUILD_TESTING)
         target_compile_options(platform_tests PRIVATE -UNDEBUG)
     endif()
     add_test(NAME platform_tests COMMAND platform_tests)
+    add_executable(ui_tests tests/ui_tests.cpp)
+    target_link_libraries(ui_tests PRIVATE engine_core)
+    if(MSVC)
+        target_compile_options(ui_tests PRIVATE /UNDEBUG /utf-8)
+    else()
+        target_compile_options(ui_tests PRIVATE -UNDEBUG)
+    endif()
+    add_test(NAME ui_tests COMMAND ui_tests)
     if(MINGW AND ENGINE_STATIC_MINGW_RUNTIME AND CMAKE_OBJDUMP)
         # Unlike rendering tests, this check does not need a Vulkan driver/GPU.
         add_test(NAME engine_runtime_dependencies
@@ -172,6 +189,7 @@ set_target_properties(engine_editor PROPERTIES INSTALL_RPATH "$ORIGIN")
 install(TARGETS engine_editor engine_core
     RUNTIME DESTINATION . LIBRARY DESTINATION . ARCHIVE DESTINATION lib)
 install(FILES README.md DESTINATION .)
+install(FILES src/engine/ui/third_party/imgui/LICENSE.txt DESTINATION licenses RENAME Dear-ImGui.txt)
 set(CPACK_GENERATOR ZIP)
 set(CPACK_PACKAGE_NAME Starter3DEngine)
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")

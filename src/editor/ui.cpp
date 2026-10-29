@@ -1,224 +1,198 @@
 #include "editor_app.hpp"
-#include "editor_ui_colors.hpp"
-
-#include <string>
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
 
 namespace editor {
-
-// Wartości pola inspektora: ktoś może je zmienić w każdym odwróceniu.
-void draw_input_text(HDC dc, int field) {
-    const RECT rect = inspector_field_rect(field);
-    const bool active = app().active_field == field;
-    static constexpr wchar_t axis_labels[3]{L'X', L'Y', L'Z'};
-    std::wstring contents;
-    contents.push_back(axis_labels[field % 3]);
-    contents += L" ";
-    contents += active ? app().field_input : number_text(*inspector_value(field));
-    draw_text(dc, contents, rect.left + 7, rect.top + 6,
-              active ? RGB(255, 230, 210) : RGB(235, 235, 236), rect.right - rect.left - 12);
+namespace {
+constexpr ImGuiWindowFlags fixed=ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize
+    |ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_NoSavedSettings
+    |ImGuiWindowFlags_NoBringToFrontOnFocus;
+void panel(const char* id,float x,float y,float width,float height,ImGuiWindowFlags extra=0) {
+    ImGui::SetNextWindowPos({x,y});
+    ImGui::SetNextWindowSize({std::max(1.0F,width),std::max(1.0F,height)});
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize,{1,1});
+    ImGui::Begin(id,nullptr,fixed|extra);
+    ImGui::PopStyleVar();
 }
-
-void draw_input(HDC dc, int field) {
-    const RECT rect = inspector_field_rect(field);
-    const bool active = app().active_field == field;
-    fill(dc, rect, active ? kInputActive : kInput);
-    const COLORREF border = active ? kInputBorderActive : kInputBorder;
-    line(dc, rect.left, rect.top, rect.right, rect.top, border);
-    line(dc, rect.left, rect.bottom - 1, rect.right, rect.bottom - 1, border);
-    line(dc, rect.left, rect.top, rect.left, rect.bottom, border);
-    line(dc, rect.right - 1, rect.top, rect.right - 1, rect.bottom, border);
-    draw_input_text(dc, field);
+void heading(const char* text) {
+    ImGui::TextColored({0.32F,0.85F,0.80F,1},"%s",text);
+    ImGui::Separator(); ImGui::Spacing();
 }
-
-// Część interfejsu zależna tylko od rozmiaru okna i paneli.
-void draw_chrome(HDC dc) {
-    App& g = app();
-    const int w = g.width, h = g.height;
-    const int right_x = w - g.right_width;
-
-    fill(dc, {0, 0, w, kHeaderHeight}, kChrome);
-    fill(dc, {0, kHeaderHeight, g.left_width, h - kFooterHeight}, kPanel);
-    fill(dc, {right_x, kHeaderHeight, w, h - kFooterHeight}, kPanel);
-    line(dc, 0, kHeaderHeight - 1, w, kHeaderHeight - 1, kBorder);
-
-    // Przeciągalne separatory paneli.
-    fill(dc, {g.left_width - 3, kHeaderHeight, g.left_width + 3, h - kFooterHeight}, kSeparator);
-    fill(dc, {right_x - 3, kHeaderHeight, right_x + 3, h - kFooterHeight}, kSeparator);
-    const int grip_y = (kHeaderHeight + h - kFooterHeight) / 2;
-    for (int offset = -12; offset <= 12; offset += 6) {
-        fill(dc, {g.left_width - 1, grip_y + offset, g.left_width + 2, grip_y + offset + 2}, kGrip);
-        fill(dc, {right_x - 1, grip_y + offset, right_x + 2, grip_y + offset + 2}, kGrip);
+void splitter(const char* id,float x,float y,float w,float h,int& value,bool reverse) {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{0,0});
+    panel(id,x,y,w,h,ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoNav);
+    ImGui::InvisibleButton("##split",{w,h});
+    if (ImGui::IsItemHovered() || ImGui::IsItemActive()) {
+        ImGui::SetMouseCursor(w<h?ImGuiMouseCursor_ResizeEW:ImGuiMouseCursor_ResizeNS);
+        ImGui::GetWindowDrawList()->AddRectFilled({x,y},{x+w,y+h},IM_COL32(65,185,178,160));
     }
-
-    // Nagłówek.
-    fill(dc, {14, 10, 40, 36}, kAccent);
-    draw_text(dc, L"S", 21, 13, RGB(255, 255, 255), 20, true);
-    draw_text(dc, L"STARTER", 50, 13, RGB(246, 246, 246), 90, true);
-    draw_text(dc, L"SCENA", 150, 14, RGB(238, 238, 238), 70);
-    line(dc, 148, kHeaderHeight - 2, 198, kHeaderHeight - 2, kAccent);
-    draw_text(dc, L"Własny silnik 3D   •   C++", w - g.right_width - 222, 14, RGB(177, 177, 180), 210);
-
-    // Lewy panel: tytuły i przyciski.
-    draw_text(dc, L"Hierarchia", 14, 58, RGB(243, 243, 243), g.left_width - 75, true);
-    draw_button(dc, {g.left_width - 72, 54, g.left_width - 43, 84}, L"+");
-    draw_button(dc, {g.left_width - 37, 54, g.left_width - 10, 84}, L"…");
-    draw_button(dc, {10, 96, g.left_width - 10, 132}, L"+ Dodaj kostkę", true);
-    draw_button(dc, {10, 137, g.left_width - 10, 173}, L"+ Dodaj kulę", true);
-    draw_button(dc, {10, 178, g.left_width - 10, 214}, L"+ Dodaj walec", true);
-    draw_button(dc, {10, 219, g.left_width - 10, 255}, L"+ Dodaj płaszczyznę", true);
-    draw_button(dc, {10, 260, g.left_width - 10, 298}, L"Zapisz scenę");
-    draw_text(dc, L"OBIEKTY SCENY", 14, 310, RGB(165, 165, 168), g.left_width - 24);
-
-    // Prawy panel: tytuły i opisy.
-    draw_text(dc, L"Inspektor", right_x + 15, 58, RGB(244, 244, 244), g.right_width - 30, true);
-    line(dc, right_x + 10, 91, w - 10, 91, kBorder);
-    fill(dc, {right_x + 10, 137, w - 10, 166}, kInput);
-    draw_text(dc, L"TRANSFORMACJA", right_x + 17, 143, RGB(177, 177, 180), g.right_width - 34);
-    draw_text(dc, L"Pozycja", right_x + 15, 174, RGB(190, 190, 193), g.right_width - 30);
-    draw_text(dc, L"Obrót", right_x + 15, 237, RGB(190, 190, 193), g.right_width - 30);
-    draw_text(dc, L"Skala", right_x + 15, 300, RGB(190, 190, 193), g.right_width - 30);
-
-    fill(dc, {right_x + 10, 366, w - 10, 395}, kInput);
-    draw_text(dc, L"STEROWANIE", right_x + 17, 372, RGB(177, 177, 180), g.right_width - 34);
-    draw_text(dc, L"Kliknij pole i wpisz wartość; Enter zatwierdza.", right_x + 15, 407, RGB(190, 190, 193), g.right_width - 28);
-    draw_text(dc, L"PPM + przeciąganie: obrót kamery", right_x + 15, 434, RGB(190, 190, 193), g.right_width - 28);
-    draw_text(dc, L"Kółko myszy: przybliżenie", right_x + 15, 461, RGB(190, 190, 193), g.right_width - 28);
-    draw_text(dc, L"Delete: usuń zaznaczony obiekt", right_x + 15, 488, RGB(190, 190, 193), g.right_width - 28);
-
-    fill(dc, {0, h - kFooterHeight, w, h}, kChrome);
-    line(dc, 0, h - kFooterHeight, w, h - kFooterHeight, kBorder);
+    if (ImGui::IsItemActive()) {
+        const auto delta=ImGui::GetIO().MouseDelta;
+        value+=static_cast<int>((w<h?delta.x:delta.y)*(reverse?-1:1));
+    }
+    ImGui::End(); ImGui::PopStyleVar();
 }
-
-// Część zależna od sceny, zaznaczenia i edycji pól.
-void draw_dynamic(HDC dc) {
-    App& g = app();
-    const int right_x = g.width - g.right_width;
-
-    int row_y = 336;
-    for (const auto& entity : g.scene.entities()) {
-        const bool selected = entity.id == g.selected;
-        if (selected) {
-            fill(dc, {6, row_y, g.left_width - 6, row_y + 32}, kRowSelected);
-            fill(dc, {6, row_y, 9, row_y + 32}, kAccent);
+std::string utf8(const std::wstring& value) {
+    const int count=WideCharToMultiByte(CP_UTF8,0,value.data(),static_cast<int>(value.size()),nullptr,0,nullptr,nullptr);
+    std::string result(static_cast<std::size_t>(std::max(0,count)),'\0');
+    if (count) WideCharToMultiByte(CP_UTF8,0,value.data(),static_cast<int>(value.size()),result.data(),count,nullptr,nullptr);
+    return result;
+}
+void vector_input(const char* label,engine::Vec3& vector,float speed) {
+    float values[]{vector.x,vector.y,vector.z};
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine(); ImGui::TextDisabled("X / Y / Z");
+    ImGui::PushID(label); ImGui::SetNextItemWidth(-1);
+    if (ImGui::DragFloat3("##value",values,speed,0,0,"%.3f")
+        && std::isfinite(values[0]) && std::isfinite(values[1]) && std::isfinite(values[2]))
+        vector={values[0],values[1],values[2]};
+    ImGui::PopID();
+}
+void hierarchy() {
+    auto& g=app();
+    heading("HIERARCHIA");
+    ImGui::TextDisabled("%zu obiektów w scenie",g.scene.entity_count());
+    ImGui::Spacing();
+    if (ImGui::Button("+ Dodaj obiekt",{-1,34})) ImGui::OpenPopup("create");
+    if (ImGui::BeginPopup("create")) {
+        if (ImGui::MenuItem("Kostka")) add_primitive(engine::PrimitiveType::Cube);
+        if (ImGui::MenuItem("Kula")) add_primitive(engine::PrimitiveType::Sphere);
+        if (ImGui::MenuItem("Walec")) add_primitive(engine::PrimitiveType::Cylinder);
+        if (ImGui::MenuItem("Płaszczyzna")) add_primitive(engine::PrimitiveType::Plane);
+        ImGui::EndPopup();
+    }
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##search","Szukaj obiektu…",g.search,sizeof(g.search));
+    ImGui::Spacing();
+    ImGui::BeginChild("objects",{0,0},ImGuiChildFlags_Borders,ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    for (const auto& entity:g.scene.entities()) {
+        if (g.search[0] && entity.name.find(g.search)==std::string::npos) continue;
+        ImGui::PushID(reinterpret_cast<void*>(static_cast<std::uintptr_t>(entity.id)));
+        const auto pos=ImGui::GetCursorScreenPos();
+        if (ImGui::Selectable("##entity",entity.id==g.selected,0,{0,28})) g.selected=entity.id;
+        ImGui::SetItemTooltip("%s",entity.name.c_str());
+        // Raw text: an object name containing ## must not become a widget ID.
+        ImGui::GetWindowDrawList()->AddRectFilled({pos.x+3,pos.y+10},{pos.x+11,pos.y+18},IM_COL32(82,187,179,255),2);
+        ImGui::GetWindowDrawList()->AddText({pos.x+19,pos.y+(28-ImGui::GetFontSize())/2},
+            ImGui::GetColorU32(ImGuiCol_Text),entity.name.c_str());
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+}
+void inspector() {
+    auto& g=app();
+    heading("INSPEKTOR");
+    auto* entity=g.scene.find_entity(g.selected);
+    if (!entity) { ImGui::TextWrapped("Wybierz obiekt w hierarchii lub w widoku 3D."); return; }
+    if (g.name_target!=entity->id) {
+        std::snprintf(g.entity_name,sizeof(g.entity_name),"%s",entity->name.c_str());
+        g.name_target=entity->id;
+    }
+    ImGui::TextDisabled("OBIEKT / %llu",static_cast<unsigned long long>(entity->id));
+    ImGui::SetNextItemWidth(-1);
+    const bool enter=ImGui::InputText("##name",g.entity_name,sizeof(g.entity_name),ImGuiInputTextFlags_EnterReturnsTrue);
+    if (enter || ImGui::IsItemDeactivatedAfterEdit()) {
+        if (g.entity_name[0]) entity->name=g.entity_name;
+        else {
+            g.status=L"Nazwa obiektu nie może być pusta";
+            std::snprintf(g.entity_name,sizeof(g.entity_name),"%s",entity->name.c_str());
         }
-        draw_entity_icon(dc, entity, 16, row_y + 9, selected ? RGB(230, 180, 146) : RGB(155, 155, 158));
-        draw_text(dc, std::wstring(entity.name.begin(), entity.name.end()), 36, row_y + 7,
-                  selected ? RGB(248, 248, 248) : RGB(190, 190, 193), g.left_width - 52);
-        row_y += 34;
     }
-
-    if (const auto* selected = g.scene.find_entity(g.selected)) {
-        draw_text(dc, std::wstring(selected->name.begin(), selected->name.end()), right_x + 15, 105,
-                  RGB(230, 133, 78), g.right_width - 28, true);
-        draw_input(dc, 0); draw_input(dc, 1); draw_input(dc, 2);
-        draw_input(dc, 3); draw_input(dc, 4); draw_input(dc, 5);
-        draw_input(dc, 6); draw_input(dc, 7); draw_input(dc, 8);
-    } else {
-        draw_text(dc, L"Brak zaznaczenia", right_x + 15, 108, RGB(185, 185, 188), g.right_width - 28);
-        draw_text(dc, L"Kliknij obiekt w widoku sceny.", right_x + 15, 134, RGB(155, 155, 158), g.right_width - 28);
+    ImGui::Spacing();
+    if (ImGui::CollapsingHeader("Transformacja",ImGuiTreeNodeFlags_DefaultOpen)) {
+        vector_input("Pozycja",entity->transform.position,0.025F);
+        vector_input("Obrót",entity->transform.rotation,0.25F);
+        vector_input("Skala",entity->transform.scale,0.01F);
+        ImGui::TextDisabled("Przeciągnij wartość / Ctrl+klik, aby wpisać");
+        if (ImGui::Button("Resetuj transformację",{-1,0})) entity->transform={};
+    }
+    ImGui::Spacing();
+    if (ImGui::CollapsingHeader("Sterowanie",ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::TextWrapped("PPM + ruch: obrót kamery\nKółko nad 3D: zoom\nLPM: wybór i gizmo\nDelete: usuń obiekt\nCtrl+S: zapisz scenę\nTab: kolejne pole\nCtrl+A/C/V: zaznacz / kopiuj / wklej");
+    }
+    ImGui::Spacing();
+    if (ImGui::Button("Usuń obiekt",{-1,0})) {
+        (void)g.scene.remove_entity(g.selected); g.selected=0; g.name_target=0;
     }
 }
-
-// Napis paska statusu jest zmienia po zdarzeniu, więc rysujemy go w każdym kadrze.
-void draw_status(HDC dc) {
-    const App& g = app();
-    draw_text(dc, g.status + L"   |   Obiektów: " + std::to_wstring(g.scene.entity_count()),
-              10, g.height - kFooterHeight + 5, RGB(185, 185, 188), g.width - 20);
 }
-
-std::wstring ui_signature() {
-    const App& g = app();
-    std::wstring signature;
-    signature.reserve(128);
-    signature += std::to_wstring(g.width); signature += L'|';
-    signature += std::to_wstring(g.height); signature += L'|';
-    signature += std::to_wstring(g.left_width); signature += L'|';
-    signature += std::to_wstring(g.right_width); signature += L'|';
-    signature += std::to_wstring(g.font_height); signature += L'|';
-    signature += std::to_wstring(g.scene.entity_count()); signature += L'|';
-    signature += std::to_wstring(g.selected); signature += L'|';
-    signature += std::to_wstring(g.active_field); signature += L'|';
-    signature += g.field_input; signature += L'|';
-    for (const auto& entity : g.scene.entities()) {
-        // Nazwa jest kodowana tak samo jak w draw_dynamic, więc sygnatura
-        // odzwierciedla dokładnie to, co jest wyświetlone.
-        signature += std::wstring(entity.name.begin(), entity.name.end());
-        signature += std::to_wstring(static_cast<int>(entity.primitive));
-        signature += L',';
-    }
-    return signature;
-}
-
-void ensure_ui_cache(HDC source_dc) {
-    App& g = app();
-    if (!source_dc) return;
-
-    if (g.ui_width != g.width || g.ui_height != g.height) {
-        if (g.ui_dc) {
-            if (g.ui_previous) {
-                SelectObject(g.ui_dc, g.ui_previous);
-                g.ui_previous = nullptr;
+void draw_ui() {
+    auto& g=app();
+    update_layout();
+    const float width=static_cast<float>(g.width), height=static_cast<float>(g.height);
+    // Splitters are GPU widgets too; their drag state stays entirely in ImGui.
+    splitter("left-split",static_cast<float>(g.left_width),kHeaderHeight,6,
+        height-kHeaderHeight-kFooterHeight,g.left_width,false);
+    splitter("right-split",width-g.right_width-6,kHeaderHeight,6,
+        height-kHeaderHeight-kFooterHeight,g.right_width,true);
+    splitter("bottom-split",static_cast<float>(g.left_width+6),height-kFooterHeight-g.bottom_height-6,
+        width-g.left_width-g.right_width-12,6,g.bottom_height,true);
+    update_layout();
+    const float left=static_cast<float>(g.left_width),right=static_cast<float>(g.right_width);
+    panel("toolbar",0,0,width,kHeaderHeight,ImGuiWindowFlags_NoScrollbar);
+    ImGui::TextColored({0.32F,0.85F,0.80F,1},"STARTER / STUDIO");
+    ImGui::SameLine(215);
+    if (ImGui::Button("Zapisz scenę")) save_scene();
+    ImGui::SameLine();
+    if (ImGui::Button("Reset kamery")) { g.yaw=0.75F;g.pitch=0.42F;g.camera_distance=8; }
+    ImGui::SameLine();
+    ImGui::TextDisabled("VULKAN  |  %u× MSAA  |  Perspektywa",g.renderer.antialiasing_samples());
+    ImGui::End();
+    panel("hierarchy",0,kHeaderHeight,left,height-kHeaderHeight-kFooterHeight);
+    hierarchy(); ImGui::End();
+    panel("inspector",width-right,kHeaderHeight,right,height-kHeaderHeight-kFooterHeight,
+        ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    inspector(); ImGui::End();
+    panel("workspace",left+6,height-kFooterHeight-g.bottom_height,
+        width-left-right-12,static_cast<float>(g.bottom_height));
+    if (ImGui::BeginTabBar("workspace-tabs")) {
+        if (ImGui::BeginTabItem("Zasoby")) {
+            ImGui::TextDisabled("PRYMITYWY / kliknij, aby dodać do sceny");
+            const engine::PrimitiveType types[]{engine::PrimitiveType::Cube,engine::PrimitiveType::Sphere,
+                engine::PrimitiveType::Cylinder,engine::PrimitiveType::Plane};
+            const char* labels[]{"Kostka","Kula","Walec","Płaszczyzna"};
+            const int columns=std::max(1,static_cast<int>((ImGui::GetContentRegionAvail().x+8)/108));
+            for (int i=0;i<4;++i) {
+                if (i%columns) ImGui::SameLine();
+                if (ImGui::Button(labels[i],{100,42})) add_primitive(types[i]);
             }
-            if (g.ui_bitmap) {
-                DeleteObject(g.ui_bitmap);
-                g.ui_bitmap = nullptr;
-            }
-            DeleteDC(g.ui_dc);
-            g.ui_dc = nullptr;
+            ImGui::EndTabItem();
         }
-        g.ui_width = g.width;
-        g.ui_height = g.height;
-        g.ui_bitmap = CreateCompatibleBitmap(source_dc, g.ui_width, g.ui_height);
-        g.ui_dc = CreateCompatibleDC(source_dc);
-        g.ui_previous = static_cast<HBITMAP>(SelectObject(g.ui_dc, g.ui_bitmap));
-        g.ui_signature.clear();
+        if (ImGui::BeginTabItem("Notatki")) {
+            if (ImGui::Button("Zapisz do project_notes.txt")) {
+                std::ofstream file("project_notes.txt");
+                if (file) { file<<g.notes; file.flush(); }
+                g.status=file?L"Zapisano notatki":L"Błąd zapisu notatek";
+            }
+            ImGui::InputTextMultiline("##notes",g.notes,sizeof(g.notes),{ -1,-1 },ImGuiInputTextFlags_AllowTabInput);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Renderer")) {
+            ImGui::TextWrapped("GPU: %s",g.renderer.device_name().c_str());
+            ImGui::TextWrapped("Cały obszar klienta: jeden render pass Vulkan. UI: trójkąty, scissor i atlas fontu. MSAA: %u×. Tekst: filtrowany atlas + pokrycie alpha. Bez bitmap GDI i bez odczytu pikseli na CPU.",g.renderer.antialiasing_samples());
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
     }
-
-    const std::wstring signature = ui_signature();
-    if (!g.ui_dc || g.ui_signature == signature) return;
-    g.ui_signature = signature;
-    draw_chrome(g.ui_dc);
-    draw_dynamic(g.ui_dc);
+    ImGui::End();
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{10,4});
+    panel("status",0,height-kFooterHeight,width,kFooterHeight,ImGuiWindowFlags_NoScrollbar);
+    const auto status=utf8(g.status);
+    ImGui::TextDisabled("%s  |  %zu obiektów",status.c_str(),g.scene.entity_count());
+    ImGui::End(); ImGui::PopStyleVar();
+    // A focused hierarchy is not a textbox. Keep editor shortcuts available
+    // there, but never delete/spawn while typing, dragging a field or in a popup.
+    const auto popup_flags=ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel;
+    if (!ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() && !ImGui::IsPopupOpen(nullptr,popup_flags)) {
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S,false)) save_scene();
+        else if (!ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N,false)) add_primitive(engine::PrimitiveType::Cube);
+        else if (ImGui::IsKeyPressed(ImGuiKey_Delete,false) && g.selected) {
+            (void)g.scene.remove_entity(g.selected); g.selected=0; g.name_target=0;
+            g.status=L"Usunięto obiekt";
+        }
+    }
 }
-
-void release_ui_cache() {
-    App& g = app();
-    if (g.ui_dc) {
-        if (g.ui_previous) SelectObject(g.ui_dc, g.ui_previous);
-        if (g.ui_bitmap) DeleteObject(g.ui_bitmap);
-        DeleteDC(g.ui_dc);
-        g.ui_dc = nullptr;
-        g.ui_previous = nullptr;
-        g.ui_bitmap = nullptr;
-    }
-    g.ui_signature.clear();
-}
-
-void draw_ui(HDC dc) {
-    App& g = app();
-    ensure_ui_cache(dc);
-
-    if (!g.ui_dc) {
-        // Bez zapasowego bufora: rysujemy cały interfejs bezpośrednio.
-        draw_chrome(dc);
-        draw_dynamic(dc);
-        draw_status(dc);
-        return;
-    }
-
-    // Kopiujemy dokładnie panele i paski, ale nie nad widok sceny.
-    const int panel_top = kHeaderHeight;
-    const int panel_height = g.height - kFooterHeight - kHeaderHeight;
-    if (panel_height > 0) {
-        BitBlt(dc, 0, panel_top, g.left_width, panel_height,
-               g.ui_dc, 0, panel_top, SRCCOPY);
-        BitBlt(dc, g.width - g.right_width, panel_top, g.right_width, panel_height,
-               g.ui_dc, g.width - g.right_width, panel_top, SRCCOPY);
-    }
-    BitBlt(dc, 0, 0, g.width, kHeaderHeight, g.ui_dc, 0, 0, SRCCOPY);
-    BitBlt(dc, 0, g.height - kFooterHeight, g.width, kFooterHeight,
-           g.ui_dc, 0, g.height - kFooterHeight, SRCCOPY);
-    draw_status(dc);
-}
-
 } // namespace editor
