@@ -1,9 +1,10 @@
-#include "engine/render/software_renderer.hpp"
+#include "engine/render/vulkan_renderer.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <fstream>
+#include <exception>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -25,7 +26,7 @@ void save_scene(const engine::Scene& scene) {
     }
 }
 
-void write_preview(const engine::SoftwareRenderer& renderer) {
+void write_preview(const engine::VulkanRenderer& renderer) {
     std::ofstream file("scene_preview.ppm", std::ios::binary);
     if (!file) return;
     file << "P6\n" << renderer.width() << ' ' << renderer.height() << "\n255\n";
@@ -39,7 +40,7 @@ void write_preview(const engine::SoftwareRenderer& renderer) {
     }
 }
 
-void print_terminal_preview(const engine::SoftwareRenderer& renderer) {
+void print_terminal_preview(const engine::VulkanRenderer& renderer) {
     const auto& pixels = renderer.pixels();
     const int width = renderer.width();
     const int height = renderer.height();
@@ -59,7 +60,7 @@ void print_terminal_preview(const engine::SoftwareRenderer& renderer) {
     }
 }
 
-void render(engine::Scene& scene, engine::SoftwareRenderer& renderer,
+void render(engine::Scene& scene, engine::VulkanRenderer& renderer,
             const engine::EditorCamera& camera, engine::EntityId selected) {
     renderer.resize(kPreviewWidth, kPreviewHeight);
     renderer.render(scene, camera, selected);
@@ -74,13 +75,13 @@ void print_help() {
 }
 } // namespace
 
-int main() {
+int run_editor() {
     engine::Scene scene;
     auto& first_cube = scene.create_entity("Cube 0");
     first_cube.transform.position = {0.0F, 0.5F, 0.0F};
     engine::EntityId selected = first_cube.id;
     engine::EditorCamera camera{{5.0F, 4.0F, 7.0F}, {0.0F, 0.5F, 0.0F}, 45.0F};
-    engine::SoftwareRenderer renderer;
+    engine::VulkanRenderer renderer;
 
     print_help();
     render(scene, renderer, camera, selected);
@@ -120,4 +121,12 @@ int main() {
     }
     std::cout << "Do zobaczenia.\n";
     return 0;
+}
+
+int main() {
+    try { return run_editor(); }
+    catch (const std::exception& error) {
+        std::cerr << "Vulkan renderer error: " << error.what() << '\n';
+        return 1;
+    }
 }

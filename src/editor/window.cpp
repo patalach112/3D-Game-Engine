@@ -34,6 +34,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp) {
         break;
     }
     case WM_SIZE:
+        if (wp == SIZE_MINIMIZED) return 0;
         g.width = LOWORD(lp);
         g.height = HIWORD(lp);
         InvalidateRect(hwnd, nullptr, FALSE);
@@ -216,6 +217,11 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp) {
         g.drag_axis = -1;
         g.resizing_left_panel = false;
         g.resizing_right_panel = false;
+        return 0;
+    case WM_CLOSE:
+        // Release the VkSurfaceKHR while the child HWND is still alive.
+        g.renderer.shutdown();
+        DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
         // Bufor interfejsu sprzątaje release_editor_resources() po cyklu message.

@@ -5,7 +5,7 @@
 #include <windows.h>
 #include <windowsx.h>
 
-#include "engine/render/software_renderer.hpp"
+#include "engine/render/vulkan_renderer.hpp"
 
 #include <cstdint>
 #include <string>
@@ -19,7 +19,10 @@ constexpr int kFooterHeight = 27;
 
 struct App {
     engine::Scene scene;
-    engine::SoftwareRenderer renderer;
+    engine::VulkanRenderer renderer;
+    HWND viewport_window{}; // Vulkan child surface; panels remain GDI.
+    RECT viewport_bounds{};
+    bool renderer_failed{};
     engine::EditorCamera camera;
     engine::EntityId selected{};
 
