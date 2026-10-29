@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/export.hpp"
+
 #include <cstdarg>
 #include <cstdio>
 #include <string>
@@ -18,16 +20,16 @@ enum class LogLevel : int {
 };
 
 // Ustawienie maksymalnego poziomu logowania (domyślnie Info).
-void set_log_level(LogLevel level);
-LogLevel log_level();
+ENGINE_API void set_log_level(LogLevel level);
+ENGINE_API LogLevel log_level();
 
 // Inicjalizacja logowania do pliku (Windows: engine.log, Linux: stderr).
 // W Release te funkcje to puste implementacje.
-void log_init(const char* filename);
-void log_shutdown();
+ENGINE_API void log_init(const char* filename);
+ENGINE_API void log_shutdown();
 
 // Interny: dodaje wiersz do logu. Nie używaj bezpośrednio.
-void log_write(LogLevel level, const char* tag, const std::string& message);
+ENGINE_API void log_write(LogLevel level, const char* tag, const std::string& message);
 
 // Helper do formatowania stringa (printf-style).
 inline std::string log_fmt(const char* fmt, ...) {
