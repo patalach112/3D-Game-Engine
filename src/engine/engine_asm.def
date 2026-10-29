@@ -1,0 +1,4 @@
+EXPORTS
+    createheap
+    freeheap
+    WindowResizedCallback

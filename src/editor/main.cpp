@@ -1,4 +1,5 @@
 #include "editor_app.hpp"
+#include "engine/platform.hpp"
 
 #include <exception>
 
@@ -21,7 +22,7 @@ LRESULT CALLBACK viewport_proc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp) {
 
 // Punkt wejścia aplikacji. Reszta logiki widoku dzielona jest pomiędzy moduły
 // w katalogu src/editor: app, ui, render, scene_io, interaction i window.
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int show) {
     SetProcessDPIAware();
 
     editor::App& state = editor::app();
@@ -29,32 +30,35 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show) {
     state.selected = 1;
     editor::update_camera();
 
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(wc);
-    wc.style = CS_HREDRAW | CS_VREDRAW;
-    wc.lpfnWndProc = editor::window_proc;
-    wc.hInstance = instance;
-    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    wc.lpszClassName = L"Starter3DEngineWindow";
-    if (!RegisterClassExW(&wc)) return 1;
-
-    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"Starter 3D Engine",
-        WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 800,
-        nullptr, nullptr, instance, nullptr);
-    if (!hwnd) return 1;
-    WNDCLASSEXW viewport_class{};
-    viewport_class.cbSize = sizeof(viewport_class);
-    viewport_class.lpfnWndProc = viewport_proc;
-    viewport_class.hInstance = instance;
-    viewport_class.lpszClassName = L"StarterVulkanViewport";
-    if (!RegisterClassExW(&viewport_class)) { DestroyWindow(hwnd); return 1; }
-    state.viewport_window = CreateWindowExW(0, viewport_class.lpszClassName, L"",
-        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, 1, 1,
-        hwnd, nullptr, instance, nullptr);
-    if (!state.viewport_window) { DestroyWindow(hwnd); return 1; }
+    std::unique_ptr<engine::Window> main_window, viewport_window;
+    HWND hwnd{};
     try {
-        state.renderer.set_window(instance, state.viewport_window);
+        engine::WindowConfig config;
+        config.title = "Starter 3D Engine";
+        config.width = 1280; config.height = 800; config.visible = false;
+        config.native_callback = [](const engine::NativeMessage& message, std::intptr_t& result, void*) {
+            result = editor::window_proc(static_cast<HWND>(message.window), message.id,
+                static_cast<WPARAM>(message.wparam), static_cast<LPARAM>(message.lparam));
+            return true;
+        };
+        main_window = engine::createnewwindow(config);
+        hwnd = reinterpret_cast<HWND>(main_window->native_handle().window);
+        config.title.clear(); config.width = config.height = 1;
+        config.child = true; config.parent = main_window->native_handle().window;
+        config.visible = true;
+        config.native_callback = [](const engine::NativeMessage& message, std::intptr_t& result, void*) {
+            result = viewport_proc(static_cast<HWND>(message.window), message.id,
+                static_cast<WPARAM>(message.wparam), static_cast<LPARAM>(message.lparam));
+            return true;
+        };
+        viewport_window = engine::createnewwindow(config);
+        state.viewport_window = reinterpret_cast<HWND>(viewport_window->native_handle().window);
+    } catch (const std::exception& error) {
+        MessageBoxA(hwnd, error.what(), "Window initialization error", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+    try {
+        state.renderer.set_window(viewport_window->native_handle().instance, state.viewport_window);
         state.renderer.initialize();
         editor::update_layout();
     } catch (const std::exception& error) {
