@@ -1,66 +1,121 @@
-# Starter 3D Engine
+# Starter 3D Engine — Vulkan
 
-Własny silnik 3D pisany w C++20. Renderer, rasteryzacja trójkątów, bufor głębokości, geometria sceny i uchwyty transformacji są kodem tego projektu. Nie używamy raylib ani innego gotowego silnika. Na Windowsie korzystamy tylko z systemowych API Win32/GDI do okna, tekstu i prezentacji obrazu.
+Własny silnik/edytor 3D w C++20 z **rendererem Vulkan 1.1**. Geometria sceny,
+transformacje, kamera, zaznaczanie i gizmo należą do projektu. Rasteryzację,
+clipping, interpolację, cieniowanie i test głębokości wykonuje Vulkan — nie pętle
+rysujące piksele na CPU. Nie używamy raylib, OpenGL ani Direct3D.
 
-## Struktura projektu
+## Architektura renderowania
 
-- `include/engine/` — klasy silnika: `Vec3`, `Scene`, `EditorCamera`, `SoftwareRenderer`.
-- `src/engine/` — implementacja silnika i własnego renderera.
-- `src/editor/` — frontend edytora:
-  - `main.cpp` — punkt wejścia `wWinMain`.
-  - `editor_app.hpp` — wspólny typ `App` oraz deklaracje funkcji.
-  - `app.cpp` — stan edytora, kamera, layout, pola inspektora.
-  - `ui.cpp` — widgety GDI: tekst, przyciski, pola, ikony.
-  - `render.cpp` — rasteryzacja widoku i prezentacja obrazu w oknie.
-  - `scene_io.cpp` — zapis sceny do `scene.txt`.
-  - `interaction.cpp` — strzałka na obiekt, gizmo, dodawanie obiektów.
-  - `window.cpp` — procedura okna i klawisze/mouse.
-  - `linux_main.cpp` — frontend terminalowy bez X11.
-- `tests/engine_tests.cpp` — testy sceny i renderera.
+- `src/engine/software_renderer.cpp` — **pełna implementacja backendu Vulkan**;
+  historyczna nazwa pliku została zachowana, ale stary rasteryzator CPU usunięto.
+- `include/engine/render/vulkan_renderer.hpp` — `VulkanRenderer`, kamera i funkcje
+  projekcji/ray picking. Nagłówek nie ujawnia typów Vulkan ani Windows.
+- `include/engine/render/software_renderer.hpp` — wyłącznie alias kompatybilności
+  `SoftwareRenderer = VulkanRenderer`, nie alternatywny renderer.
+- `src/shaders/scene.vert`, `scene.frag` — shadery GLSL. CMake kompiluje je do
+  SPIR-V i osadza w programie; uruchomienie nie wymaga plików shaderów ani
+  określonego katalogu roboczego. Nie potrzeba GLM ani shaderc w runtime.
+- `src/engine/scene.cpp`, `include/engine/scene/` — płaska lista encji i transformacje.
+- `src/editor/` — edytor Win32/GDI oraz terminalowy frontend Linuksa.
 
-## Windows
+Backend tworzy instancję Vulkan, wybiera urządzenie i kolejki, zarządza pamięcią,
+buforami wierzchołków, obrazami koloru/głębokości, render passem, pipeline'ami,
+command bufferem i synchronizacją. Karty zintegrowane są obsługiwane; dedykowane
+mają priorytet. Nie wymaga geometry shaderów, descriptor indexing ani bindless
+textures, ponieważ obecna scena nie ma tekstur i compute cullingu.
+Warstwa `VK_LAYER_KHRONOS_validation` i debug messenger włączają się opcjonalnie
+w konfiguracji Debug, jeśli są zainstalowane. Ich brak nie blokuje startu.
 
-Wymagane: CMake 3.20+ oraz kompilator C++20, np. Visual Studio 2022 albo MinGW-w64.
+### Windows
 
-```powershell
-cmake -S . -B build
-cmake --build build --config Release
-# Visual Studio:
-.\build\Release\engine_editor.exe
-# MinGW/Ninja:
-.\build\engine_editor.exe
+Widok sceny ma osobne okno potomne Win32 z `VkSurfaceKHR` i swapchainem. Przepływ:
+
+```text
+Scene → geometria → vertex buffer → shadery + depth buffer
+      → obraz GPU → blit GPU do swapchaina → vkQueuePresentKHR
 ```
 
-W konfiguracji MinGW CMake dodaje `-municode`, aby linker poprawnie użył wejściowej funkcji `wWinMain`.
+**Nie ma `SetDIBitsToDevice` ani odczytu pikseli do RAM w ścieżce Windows.**
+GDI nadal rysuje panele, tekst i przyciski edytora, nie scenę 3D.
+Zmiana rozmiaru okna/separatorów odtwarza potrzebne zasoby. Minimalizacja pomija
+renderowanie/prezentację, a `VK_ERROR_OUT_OF_DATE_KHR` i `VK_SUBOPTIMAL_KHR`
+powodują odtworzenie swapchaina. Zasoby są zwalniane po zakończeniu pracy GPU.
 
-## Linux
+Edytor jest odświeżany zdarzeniowo: rasteryzacja tylko po zmianie sceny, kamery,
+zaznaczenia lub rozmiaru; przy samym odmalowaniu UI prezentuje gotowy obraz.
+Na razie jest **jedna klatka w locie**, z fence i semaforami prezentacji osobnymi
+na obraz swapchaina. To prosty, zsynchronizowany backend edytora, nie jeszcze
+wieloklatkowy renderer do gry o wysokiej przepustowości.
 
-Na Linuxie ten sam rdzeń sceny i własny renderer uruchamiają testowy edytor terminalowy. Pokazuje podgląd 3D w terminalu obsługującym kolory true-color i zapisuje pełny obraz do `scene_preview.ppm`. Wersja ta nie wymaga X11 ani zewnętrznych bibliotek graficznych, dzięki czemu może służyć do budowania i testowania renderera również w środowisku bez pulpitu. Dla generatorów jednokonfiguracyjnych, takich jak Ninja/MinGW, zwykła konfiguracja domyślnie włącza Release z optymalizacją; do debugowania ustaw `-DCMAKE_BUILD_TYPE=Debug`.
+### Linux / headless
+
+Ten sam backend Vulkan renderuje do obrazu pozaekranowego, kopiuje go do bufora
+host-visible i udostępnia `pixels()` jako `0x00RRGGBB`. Terminal wyświetla podgląd
+72×48 w ANSI true-color i zapisuje ten sam obraz do `scene_preview.ppm`.
+Nie wymaga X11/Wayland ani okna, ale **wymaga działającego sterownika Vulkan**.
+Można użyć sprzętowego ICD albo programowego ICD (np. Mesa lavapipe / SwiftShader)
+w CI. Programowy ICD nadal wykonuje polecenia Vulkan; projekt nie ma fallbacku
+na poprzedni rasteryzator CPU. `pixels()` nie jest zapełniane w trybie swapchaina.
+
+## Budowanie
+
+Wymagane: CMake 3.20+, kompilator C++20, nagłówki/biblioteka Vulkan 1.1+,
+**glslc albo glslangValidator** do kompilacji shaderów oraz sterownik Vulkan.
+
+### Windows
+
+Zainstaluj Vulkan SDK i sterownik GPU z obsługą Vulkan. Uruchom nowy terminal,
+żeby CMake widział `VULKAN_SDK` i narzędzia SDK. Przykład z Visual Studio 2022:
+
+```powershell
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+.\build\Release\engine_editor.exe
+```
+
+Dla MinGW/Ninja ścieżka to `build\engine_editor.exe`; CMake dodaje `-municode`
+dla `wWinMain`. Użyj biblioteki loadera Vulkan pasującej do toolchaina/architektury.
+Na maszynie docelowej wymagany jest `vulkan-1.dll` dostarczany ze sterownikiem.
+
+### Linux
+
+Przykładowe pakiety Debiana/Ubuntu:
 
 ```sh
+sudo apt install cmake g++ libvulkan-dev glslang-tools mesa-vulkan-drivers
 cmake -S . -B build -DBUILD_TESTING=ON
 cmake --build build -j2
 ctest --test-dir build --output-on-failure
 ./build/engine_editor
 ```
 
-Komendy wersji terminalowej: `add`, `select ID`, `move X Y Z`, `delete`, `save`, `render`, `help`, `quit`.
+Dla niestandardowego SDK ustaw `VULKAN_SDK` / `CMAKE_PREFIX_PATH`; kompilator
+shaderów można wskazać przez `-DENGINE_GLSLC=/ścieżka/glslc` lub
+`-DENGINE_GLSLANG=/ścieżka/glslangValidator`. Testy nie pomijają braku sterownika:
+bez poprawnego ICD uruchomienie zakończy się błędem inicjalizacji Vulkan.
 
-## Prototyp zawiera
+Komendy terminala: `add`, `select ID`, `move X Y Z`, `delete`, `save`, `render`,
+`help`, `quit`.
 
-- Sceny z kostkami, kulami, walcami i płaszczyznami 3D.
-- Inspektor z edytowalnymi polami pozycji, obrotu i skali. Kliknij wartość, wpisz liczbę i naciśnij Enter.
-- Własny renderer programowy z perspektywą, rasteryzacją ścian, testem głębokości i przeciąganiem ścian przez płaszczyznę bliskości — duże obiekty, w których kamera się znajduje, tracą już nie ściany.
-- Siatkę bez wypełnionej podłogi: tło widoku prześwituje pomiędzy liniami. Linie mają poprawioną interpolację głębokości, delikatne wygaszanie i większą odporność na znikanie przy przecięciach.
-- Windowsowy interfejs rysowany do bufora pozaekranowego i odświeżany tylko po zmianie sceny lub okna, by ograniczyć miganie i niepotrzebne obciążenie CPU.
-- Windowsowy, skalowalny interfejs z hierarchią i inspektorem, wyświetlający tekst Unicode w Segoe UI. Główne okno można zmieniać rozmiarem, a szerokość paneli zmienić przez przeciągnięcie separatorów.
-- Interfejs rysowany offline i kopowany na krawędzi paneli: przyciski, pola i ikony tworzą swoje obiekty GDI
-  tylko raz, a w każdym kadrze powstaje jedna zapasowa warstwa paneli i tekst paska statusu.
-- Scena trafia prosto na DC okna przez `SetDIBitsToDevice`. Stary czas trzymał pełnowymiarowy bufor GDI,
-  potem `StretchDIBits` i `BitBlt` robili po kolejnej kopie. Rasteryzacja jest powtarzana tylko, gdy się
-  zmieni kamera, scena, zaznaczenie lub rozmiar widoku — reszta klatek po prostu pokazuje wcześniejszy obraz.
-- Zaznaczanie i przesuwanie obiektów kolorowymi uchwytami osi.
-- Obracanie kamery prawym przyciskiem myszy i przybliżanie kółkiem.
+## Funkcje
+
+- Kostki, kule, walce i płaszczyzny; mesh każdego typu jest generowany i buforowany.
+- Pozycja, obrót Euler XYZ i skala, również ujemna.
+- Perspektywa z płaszczyzną near 0.08 i far 100000; clipping wykonuje Vulkan.
+- Dwustronne ściany, także gdy kamera znajduje się wewnątrz bryły.
+- Proste płaskie cieniowanie kierunkowe, kolory brył, krawędzie zaznaczenia.
+- Siatka XZ bez nieprzezroczystej podłogi, adaptacyjny rozstaw i wygaszanie w oddali.
+- Gizmo osi X/Y/Z jako nakładka Vulkan, ze stałym ekranowym rozmiarem końcówek.
+- Windows: hierarchia, inspektor, przeciągane separatory paneli, Unicode/Segoe UI,
+  obracanie kamery PPM, zoom kółkiem, zaznaczanie i przeciąganie obiektów.
 - Zapis sceny do `scene.txt`.
 
-Wersja terminalowa Linuksa służy do sprawdzania rdzenia i renderera. Nie zastępuje jeszcze graficznego edytora Windows. Fizyka, edytor kodu C++, programowanie wizualne oraz eksport gotowej gry są dalszymi etapami.
+Testy obejmują scenę, każdy prymityw, zaznaczenie, transformacje, głębokość
+niezależną od kolejności obiektów, near clipping, kamerę wewnątrz kostki/kuli,
+obiekt za kamerą, powtarzalność obrazu, zmianę rozmiaru i ponowną inicjalizację.
+Asercje pozostają aktywne również w konfiguracji Release.
+
+Tekstury, bindless, compute culling, fizyka, eksport gry i programowanie wizualne
+nie są jeszcze zaimplementowane.
