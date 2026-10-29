@@ -15,6 +15,8 @@
 #include <vulkan/vulkan.h>
 #include "engine/render/vulkan_renderer.hpp"
 #include "scene_shaders.hpp"
+#include "geometry_shaders.hpp"
+#include "engine/objects.hpp"
 #include "engine/ui.hpp"
 #include "backends/imgui_impl_vulkan.h"
 #ifdef _WIN32
@@ -179,17 +181,18 @@ Ray3 screen_ray(float x,float y,const EditorCamera& camera,int width,int height)
 }
 
 namespace {
-struct Vertex {
+struct DebugVertex {
     Vec3 position;
     Vec3 color;
-    Vec3 normal{};
     float grid{};
 };
+struct DebugAttributes { Vec3 color; float grid; };
+static_assert(sizeof(DebugAttributes)==16);
 struct CameraPush {
     std::array<float, 4> right, up, forward, eye, projection;
 };
 static_assert(sizeof(CameraPush) == 80);
-static_assert(sizeof(Vertex) == 40);
+static_assert(sizeof(DebugVertex) == 28); // CPU construction only, never uploaded as vertices.
 
 Vec3 rgb(std::uint32_t value) {
     return {static_cast<float>((value >> 16U) & 255U) / 255.0F,
@@ -216,20 +219,23 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBit
     return VK_FALSE;
 }
 struct FrameGeometry {
-    std::vector<Vertex> vertices;
-    std::uint32_t triangles{}, lines{}, overlay_lines{}, overlay_triangles{};
+    std::vector<DebugVertex> vertices;
+    GeometryBuffer geometry;
+    std::uint32_t lines{}, overlay_lines{}, overlay_triangles{};
 };
 FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, EntityId selected,
                              int width, int height) {
-    std::vector<Vertex> triangles, lines, overlay_lines, overlay_triangles;
-    const auto line = [](std::vector<Vertex>& out, Vec3 a, Vec3 b, Vec3 color, float grid = 0.0F) {
-        out.push_back({a, color, {}, grid}); out.push_back({b, color, {}, grid});
+    std::vector<DebugVertex> lines, overlay_lines, overlay_triangles;
+    const auto line = [](std::vector<DebugVertex>& out, Vec3 a, Vec3 b, Vec3 color, float grid = 0.0F) {
+        out.push_back({a, color, grid}); out.push_back({b, color, grid});
     };
     for (const auto& entity : scene.entities()) {
+        if (entity.primitive!=PrimitiveType::Cube && entity.id!=selected) continue;
         const auto& mesh = primitive_mesh(entity.primitive);
         const auto& t = entity.transform;
         if (!finite(t.position) || !finite(t.rotation) || !finite(t.scale)) continue;
-        const float rx=t.rotation.x*kPi/180.0F, ry=t.rotation.y*kPi/180.0F, rz=t.rotation.z*kPi/180.0F;
+        const auto rotation=unpack_rotation(pack_rotation(t.rotation));
+        const float rx=rotation.x*kPi/180.0F, ry=rotation.y*kPi/180.0F, rz=rotation.z*kPi/180.0F;
         const float cx=std::cos(rx),sx=std::sin(rx),cy=std::cos(ry),sy=std::sin(ry),cz=std::cos(rz),sz=std::sin(rz);
         std::vector<Vec3> world;
         world.reserve(mesh.vertices.size());
@@ -239,17 +245,6 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
             const Vec3 py{px.x*cy+px.z*sy,px.y,-px.x*sy+px.z*cy};
             world.push_back(add({py.x*cz-py.y*sz,py.x*sz+py.y*cz,py.z}, t.position));
         }
-        std::uint32_t base=entity.primitive==PrimitiveType::Sphere?0x007FA8D8U:
-            entity.primitive==PrimitiveType::Cylinder?0x007DAF82U:
-            entity.primitive==PrimitiveType::Plane?0x00B2A27DU:0x00A7A7AAU;
-        if (entity.id == selected) base = 0x00D8D8DAU;
-        for (const auto& tri : mesh.triangles) {
-            const auto a=world[tri[0]], b=world[tri[1]], c=world[tri[2]];
-            const Vec3 normal=normalize(cross(subtract(b,a),subtract(c,a)));
-            triangles.push_back({a,rgb(base),normal});
-            triangles.push_back({b,rgb(base),normal});
-            triangles.push_back({c,rgb(base),normal});
-        }
         if (entity.primitive == PrimitiveType::Cube || entity.id == selected) {
             for (const auto& edge : mesh.edges)
                 line(lines, world[edge[0]], world[edge[1]],
@@ -257,6 +252,35 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
         }
     }
 
+    GeometryBuilder builder;
+    std::array<MeshId,4> cached{};
+    std::array<bool,4> has_mesh{};
+    for (const auto& entity:scene.entities()) {
+        const auto& t=entity.transform;
+        if (!finite(t.position)||!finite(t.rotation)||!finite(t.scale)) continue;
+        const bool uniform=t.scale.x==t.scale.y&&t.scale.y==t.scale.z;
+        const auto type=static_cast<std::size_t>(entity.primitive);
+        const auto& mesh=primitive_mesh(entity.primitive);
+        MeshId id{};
+        if (uniform&&has_mesh[type]) id=cached[type];
+        else {
+            std::vector<engine::Vertex> vertices;
+            std::vector<std::uint32_t> indices;
+            const auto local=[&](Vec3 p) { return uniform?p:Vec3{p.x*t.scale.x,p.y*t.scale.y,p.z*t.scale.z}; };
+            for (const auto& triangle:mesh.triangles) {
+                const auto a=local(mesh.vertices[triangle[0]]),b=local(mesh.vertices[triangle[1]]),c=local(mesh.vertices[triangle[2]]);
+                const auto normal=normalize(cross(subtract(b,a),subtract(c,a)));
+                for (auto p:{a,b,c}) { indices.push_back(static_cast<std::uint32_t>(vertices.size())); vertices.push_back(make_vertex(p,normal)); }
+            }
+            id=builder.add_mesh(vertices,indices);
+            if (uniform) { cached[type]=id; has_mesh[type]=true; }
+        }
+        ObjectData object;
+        object.position=t.position; object.rotation=pack_rotation(t.rotation); object.scale=uniform?t.scale.x:1;
+        const auto base=entity.id==selected?0x00D8D8DAU:entity.primitive==PrimitiveType::Sphere?0x007FA8D8U:
+            entity.primitive==PrimitiveType::Cylinder?0x007DAF82U:entity.primitive==PrimitiveType::Plane?0x00B2A27DU:0x00A7A7AAU;
+        const auto tint=rgb(base); builder.add_object(id,object,{tint.x,tint.y,tint.z,1});
+    }
     // Ground grid bounds follow the frustum, rather than a fixed little patch.
     const Basis basis=camera_basis(camera);
     const float v_tan=std::tan(camera.vertical_fov_degrees*kPi/360.0F);
@@ -312,15 +336,15 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
         }
     }
     FrameGeometry frame;
-    const std::size_t total=triangles.size()+lines.size()+overlay_lines.size()+overlay_triangles.size();
+    const std::size_t total=lines.size()+overlay_lines.size()+overlay_triangles.size();
     if (total>std::numeric_limits<std::uint32_t>::max()) throw std::length_error("Scene has too many vertices");
-    frame.triangles=static_cast<std::uint32_t>(triangles.size());
     frame.lines=static_cast<std::uint32_t>(lines.size());
     frame.overlay_lines=static_cast<std::uint32_t>(overlay_lines.size());
     frame.overlay_triangles=static_cast<std::uint32_t>(overlay_triangles.size());
     frame.vertices.reserve(total);
-    for (const auto* batch : {&triangles,&lines,&overlay_lines,&overlay_triangles})
+    for (const auto* batch : {&lines,&overlay_lines,&overlay_triangles})
         frame.vertices.insert(frame.vertices.end(),batch->begin(),batch->end());
+    frame.geometry=builder.build();
     return frame;
 }
 } // namespace
@@ -349,13 +373,19 @@ struct VulkanRenderer::Impl {
     VkFence fence{};
     VkRenderPass render_pass{};
     VkPipelineLayout layout{};
-    VkPipeline solid{}, wire{}, overlay_wire{}, overlay_solid{};
+    VkPipeline wire{}, overlay_wire{}, overlay_solid{};
+    VkPipeline object_pipeline{},hud_pipeline{},cull_pipeline{};
+    VkPipelineLayout object_layout{},hud_layout{},cull_layout{};
+    VkDescriptorSetLayout geometry_set_layout{};
+    VkDescriptorPool geometry_pool{};
+    VkDescriptorSet geometry_set{};
+    std::vector<DrawIndexedIndirectCommand> last_commands;
     VkFormat depth_format{};
     VkSampleCountFlagBits samples{VK_SAMPLE_COUNT_1_BIT};
     ImGuiContext* ui{};
     bool ui_platform{}, ui_frame_open{};
     struct Image { VkImage handle{}; VkDeviceMemory memory{}; VkImageView view{}; } color, depth, msaa;
-    struct Buffer { VkBuffer handle{}; VkDeviceMemory memory{}; VkDeviceSize capacity{}; void* mapped{}; } vertices, readback;
+    struct Buffer { VkBuffer handle{}; VkDeviceMemory memory{}; VkDeviceSize capacity{}; void* mapped{}; } vertices, readback, geometry, object_data, indirect, ui_uv;
     VkFramebuffer framebuffer{};
     int target_width{}, target_height{};
     bool rendered{};
@@ -374,7 +404,8 @@ struct VulkanRenderer::Impl {
     void destroy_buffer(Buffer& buffer) noexcept;
     void ensure_buffer(Buffer& buffer, VkDeviceSize size, VkBufferUsageFlags usage);
     void create_target(int width, int height);
-    VkPipeline pipeline(VkPrimitiveTopology topology, bool depth_test, bool depth_write);
+    VkPipeline pipeline(VkPrimitiveTopology topology, bool depth_test, bool depth_write,int kind=0);
+    void init_geometry();
     void begin();
     void submit(VkSemaphore wait = VK_NULL_HANDLE, VkSemaphore signal = VK_NULL_HANDLE);
     void draw(const FrameGeometry& frame, const EditorCamera& camera, int width, int height,
@@ -450,7 +481,14 @@ void VulkanRenderer::Impl::init() {
     for (VkPhysicalDevice candidate : devices) {
         VkPhysicalDeviceProperties properties{};
         vkGetPhysicalDeviceProperties(candidate,&properties);
-        if (properties.apiVersion<VK_API_VERSION_1_1) continue;
+        VkPhysicalDeviceFeatures features{}; vkGetPhysicalDeviceFeatures(candidate,&features);
+        if (properties.apiVersion<VK_API_VERSION_1_1 || !features.drawIndirectFirstInstance) continue;
+        bool vertex_formats=true;
+        for (auto format:{VK_FORMAT_R16G16B16A16_SFLOAT,VK_FORMAT_A2B10G10R10_UNORM_PACK32}) {
+            VkFormatProperties support{}; vkGetPhysicalDeviceFormatProperties(candidate,format,&support);
+            vertex_formats&=(support.bufferFeatures&VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT)!=0;
+        }
+        if (!vertex_formats) continue;
         std::uint32_t families_count=0;
         vkGetPhysicalDeviceQueueFamilyProperties(candidate,&families_count,nullptr);
         std::vector<VkQueueFamilyProperties> families(families_count);
@@ -458,13 +496,13 @@ void VulkanRenderer::Impl::init() {
         std::optional<std::uint32_t> graphics, present;
         for (std::uint32_t i=0;i<families_count;++i) {
             if (!families[i].queueCount) continue;
-            if (!graphics && (families[i].queueFlags&VK_QUEUE_GRAPHICS_BIT)) graphics=i;
+            if (!graphics && ((families[i].queueFlags&(VK_QUEUE_GRAPHICS_BIT|VK_QUEUE_COMPUTE_BIT))==(VK_QUEUE_GRAPHICS_BIT|VK_QUEUE_COMPUTE_BIT))) graphics=i;
             if (surface) {
                 VkBool32 supported=VK_FALSE;
                 check(vkGetPhysicalDeviceSurfaceSupportKHR(candidate,i,surface,&supported),"Query presentation support");
                 if (!present && supported) present=i;
                 // Prefer a single graphics/presentation family when possible.
-                if (supported && (families[i].queueFlags&VK_QUEUE_GRAPHICS_BIT)) { graphics=i; present=i; break; }
+                if (supported && ((families[i].queueFlags&(VK_QUEUE_GRAPHICS_BIT|VK_QUEUE_COMPUTE_BIT))==(VK_QUEUE_GRAPHICS_BIT|VK_QUEUE_COMPUTE_BIT))) { graphics=i; present=i; break; }
             }
         }
         if (!graphics || (surface && !present)) continue;
@@ -497,7 +535,7 @@ void VulkanRenderer::Impl::init() {
             graphics_family=*graphics; present_family=present.value_or(*graphics);
         }
     }
-    if (!physical) throw std::runtime_error("No suitable Vulkan 1.1 device/driver. Install a Vulkan-capable graphics driver.");
+    if (!physical) throw std::runtime_error("No suitable Vulkan 1.1 graphics+compute device with drawIndirectFirstInstance. Install a Vulkan-capable graphics driver.");
     const float priority=1;
     std::vector<VkDeviceQueueCreateInfo> queues;
     for (auto family : {graphics_family,present_family}) {
@@ -514,6 +552,8 @@ void VulkanRenderer::Impl::init() {
     device_info.pQueueCreateInfos=queues.data();
     device_info.enabledExtensionCount=surface?1:0;
     device_info.ppEnabledExtensionNames=surface?&swap_extension:nullptr;
+    VkPhysicalDeviceFeatures enabled{}; enabled.drawIndirectFirstInstance=VK_TRUE;
+    device_info.pEnabledFeatures=&enabled;
     check(vkCreateDevice(physical,&device_info,nullptr,&device),"Create logical Vulkan device");
     vkGetDeviceQueue(device,graphics_family,0,&graphics_queue);
     vkGetDeviceQueue(device,present_family,0,&present_queue);
@@ -593,18 +633,18 @@ void VulkanRenderer::Impl::init() {
     pass_info.subpassCount=1; pass_info.pSubpasses=&subpass;
     pass_info.dependencyCount=2; pass_info.pDependencies=dependencies.data();
     check(vkCreateRenderPass(device,&pass_info,nullptr,&render_pass),"Create render pass");
-    VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(CameraPush)};
+    VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(CameraPush)+sizeof(Vec4)};
     VkPipelineLayoutCreateInfo layout_info{};
     layout_info.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layout_info.pushConstantRangeCount=1; layout_info.pPushConstantRanges=&push;
     check(vkCreatePipelineLayout(device,&layout_info,nullptr,&layout),"Create pipeline layout");
-    solid=pipeline(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,true,true);
+    init_geometry();
     wire=pipeline(VK_PRIMITIVE_TOPOLOGY_LINE_LIST,true,false);
     overlay_wire=pipeline(VK_PRIMITIVE_TOPOLOGY_LINE_LIST,false,false);
     overlay_solid=pipeline(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,false,false);
 }
 
-VkPipeline VulkanRenderer::Impl::pipeline(VkPrimitiveTopology topology, bool depth_test, bool depth_write) {
+VkPipeline VulkanRenderer::Impl::pipeline(VkPrimitiveTopology topology, bool depth_test, bool depth_write,int kind) {
     struct Module {
         VkDevice device;
         VkShaderModule handle{};
@@ -616,21 +656,34 @@ VkPipeline VulkanRenderer::Impl::pipeline(VkPrimitiveTopology topology, bool dep
         info.codeSize=sizeof(code); info.pCode=code;
         check(vkCreateShaderModule(device,&info,nullptr,&module),"Create shader module");
     };
-    create_module(shaders::vert,vertex.handle); create_module(shaders::frag,fragment.handle);
+    if (kind==1) create_module(packed_shaders::object_vert,vertex.handle);
+    else if (kind==2) create_module(packed_shaders::hud_vert,vertex.handle);
+    else create_module(packed_shaders::debug_vert,vertex.handle);
+    if (kind==2) create_module(packed_shaders::hud_frag,fragment.handle);
+    else create_module(shaders::frag,fragment.handle);
     std::array<VkPipelineShaderStageCreateInfo,2> stages{};
     for (auto& stage : stages) { stage.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; stage.pName="main"; }
     stages[0].stage=VK_SHADER_STAGE_VERTEX_BIT; stages[0].module=vertex.handle;
     stages[1].stage=VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module=fragment.handle;
-    VkVertexInputBindingDescription binding{0,sizeof(Vertex),VK_VERTEX_INPUT_RATE_VERTEX};
-    const std::array<VkVertexInputAttributeDescription,4> attributes{{
-        {0,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(Vertex,position)},
-        {1,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(Vertex,color)},
-        {2,0,VK_FORMAT_R32G32B32_SFLOAT,offsetof(Vertex,normal)},
-        {3,0,VK_FORMAT_R32_SFLOAT,offsetof(Vertex,grid)}}};
+    VkVertexInputBindingDescription bindings[]{{0,sizeof(engine::Vertex),VK_VERTEX_INPUT_RATE_VERTEX},
+        {1,sizeof(DebugAttributes),VK_VERTEX_INPUT_RATE_VERTEX}};
+    std::array<VkVertexInputAttributeDescription,3> attributes{{
+        {0,0,VK_FORMAT_R16G16B16A16_SFLOAT,0},
+        {1,1,VK_FORMAT_R32G32B32_SFLOAT,0},
+        {3,1,VK_FORMAT_R32_SFLOAT,12}}};
+    std::uint32_t attribute_count=3, binding_count=2;
+    if (kind==1) {
+        binding_count=1; attribute_count=2;
+        attributes[1]={1,0,VK_FORMAT_A2B10G10R10_UNORM_PACK32,8};
+    } else if (kind==2) {
+        bindings[0].stride=sizeof(Vertex_hud); binding_count=1; attribute_count=2;
+        attributes[0]={0,0,VK_FORMAT_R32G32_SFLOAT,0};
+        attributes[1]={1,0,VK_FORMAT_R32G32B32A32_SFLOAT,8};
+    }
     VkPipelineVertexInputStateCreateInfo vertex_input{};
     vertex_input.sType=VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertex_input.vertexBindingDescriptionCount=1; vertex_input.pVertexBindingDescriptions=&binding;
-    vertex_input.vertexAttributeDescriptionCount=static_cast<std::uint32_t>(attributes.size());
+    vertex_input.vertexBindingDescriptionCount=binding_count; vertex_input.pVertexBindingDescriptions=bindings;
+    vertex_input.vertexAttributeDescriptionCount=attribute_count;
     vertex_input.pVertexAttributeDescriptions=attributes.data();
     VkPipelineInputAssemblyStateCreateInfo assembly{};
     assembly.sType=VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO; assembly.topology=topology;
@@ -651,6 +704,15 @@ VkPipeline VulkanRenderer::Impl::pipeline(VkPrimitiveTopology topology, bool dep
     depth_state.depthTestEnable=depth_test; depth_state.depthWriteEnable=depth_write; depth_state.depthCompareOp=VK_COMPARE_OP_LESS_OR_EQUAL;
     VkPipelineColorBlendAttachmentState blend_attachment{};
     blend_attachment.colorWriteMask=VK_COLOR_COMPONENT_R_BIT|VK_COLOR_COMPONENT_G_BIT|VK_COLOR_COMPONENT_B_BIT|VK_COLOR_COMPONENT_A_BIT;
+    if (kind==2) {
+        blend_attachment.blendEnable=VK_TRUE;
+        blend_attachment.srcColorBlendFactor=VK_BLEND_FACTOR_SRC_ALPHA;
+        blend_attachment.dstColorBlendFactor=VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        blend_attachment.colorBlendOp=VK_BLEND_OP_ADD;
+        blend_attachment.srcAlphaBlendFactor=VK_BLEND_FACTOR_ONE;
+        blend_attachment.dstAlphaBlendFactor=VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        blend_attachment.alphaBlendOp=VK_BLEND_OP_ADD;
+    }
     VkPipelineColorBlendStateCreateInfo blend{};
     blend.sType=VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     blend.attachmentCount=1; blend.pAttachments=&blend_attachment;
@@ -662,7 +724,7 @@ VkPipeline VulkanRenderer::Impl::pipeline(VkPrimitiveTopology topology, bool dep
     info.stageCount=2; info.pStages=stages.data(); info.pVertexInputState=&vertex_input;
     info.pInputAssemblyState=&assembly; info.pViewportState=&viewport; info.pRasterizationState=&raster;
     info.pMultisampleState=&multisample; info.pDepthStencilState=&depth_state;
-    info.pColorBlendState=&blend; info.pDynamicState=&dynamic; info.layout=layout; info.renderPass=render_pass;
+    info.pColorBlendState=&blend; info.pDynamicState=&dynamic; info.layout=kind==1?object_layout:kind==2?hud_layout:layout; info.renderPass=render_pass;
     VkPipeline result{};
     const VkResult status=vkCreateGraphicsPipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&result);
     if (status!=VK_SUCCESS) {
@@ -670,6 +732,46 @@ VkPipeline VulkanRenderer::Impl::pipeline(VkPrimitiveTopology topology, bool dep
         check(status,"Create graphics pipeline");
     }
     return result;
+}
+
+void VulkanRenderer::Impl::init_geometry() {
+    static_assert(sizeof(DrawIndexedIndirectCommand)==sizeof(VkDrawIndexedIndirectCommand));
+    static_assert(offsetof(DrawIndexedIndirectCommand,firstInstance)==offsetof(VkDrawIndexedIndirectCommand,firstInstance));
+    const VkDescriptorSetLayoutBinding bindings[]{
+        {0,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_COMPUTE_BIT,nullptr},
+        {1,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr}};
+    VkDescriptorSetLayoutCreateInfo set_info{}; set_info.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    set_info.bindingCount=2; set_info.pBindings=bindings;
+    check(vkCreateDescriptorSetLayout(device,&set_info,nullptr,&geometry_set_layout),"Create geometry descriptor layout");
+    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,2};
+    VkDescriptorPoolCreateInfo pool_info{}; pool_info.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.maxSets=1; pool_info.poolSizeCount=1; pool_info.pPoolSizes=&size;
+    check(vkCreateDescriptorPool(device,&pool_info,nullptr,&geometry_pool),"Create geometry descriptor pool");
+    VkDescriptorSetAllocateInfo allocation{}; allocation.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocation.descriptorPool=geometry_pool; allocation.descriptorSetCount=1; allocation.pSetLayouts=&geometry_set_layout;
+    check(vkAllocateDescriptorSets(device,&allocation,&geometry_set),"Allocate geometry descriptors");
+    const auto make_layout=[&](VkPipelineLayout& target,VkShaderStageFlags stage,std::uint32_t bytes,bool descriptors) {
+        VkPushConstantRange range{stage,0,bytes};
+        VkPipelineLayoutCreateInfo info{}; info.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        info.pushConstantRangeCount=1; info.pPushConstantRanges=&range;
+        info.setLayoutCount=descriptors?1:0; info.pSetLayouts=descriptors?&geometry_set_layout:nullptr;
+        check(vkCreatePipelineLayout(device,&info,nullptr,&target),"Create packed geometry pipeline layout");
+    };
+    make_layout(object_layout,VK_SHADER_STAGE_VERTEX_BIT,sizeof(CameraPush)+sizeof(Vec4),true);
+    make_layout(hud_layout,VK_SHADER_STAGE_VERTEX_BIT,sizeof(Vec4),false);
+    make_layout(cull_layout,VK_SHADER_STAGE_COMPUTE_BIT,sizeof(CameraPush)+sizeof(std::uint32_t),true);
+    VkShaderModule module{};
+    VkShaderModuleCreateInfo shader{}; shader.sType=VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    shader.pCode=packed_shaders::cull_comp; shader.codeSize=sizeof(packed_shaders::cull_comp);
+    check(vkCreateShaderModule(device,&shader,nullptr,&module),"Create visibility compute shader");
+    VkComputePipelineCreateInfo info{}; info.sType=VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    info.stage.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    info.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT; info.stage.module=module; info.stage.pName="main";
+    info.layout=cull_layout;
+    const auto result=vkCreateComputePipelines(device,VK_NULL_HANDLE,1,&info,nullptr,&cull_pipeline);
+    vkDestroyShaderModule(device,module,nullptr); check(result,"Create visibility compute pipeline");
+    object_pipeline=pipeline(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,true,true,1);
+    hud_pipeline=pipeline(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,false,false,2);
 }
 
 std::uint32_t VulkanRenderer::Impl::memory_type(std::uint32_t bits, VkMemoryPropertyFlags flags) {
@@ -783,12 +885,98 @@ void VulkanRenderer::Impl::submit(VkSemaphore wait, VkSemaphore signal) {
 void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& camera,
                                 int width, int height, std::vector<std::uint32_t>& pixels,
                                 RenderViewport scene_view, bool draw_ui) {
+    auto packed=frame.geometry;
+    const auto custom_hud_indices=packed.layout.hudIndexCount;
+    const auto custom_hud_vertices=packed.layout.hudVertexCount;
+    const auto debug_base=packed.layout.sceneVertexCount;
+    const auto debug_first=packed.layout.sceneIndexCount;
+    std::vector<DebugAttributes> debug_attributes;
+    float debug_scale=1;
+    if (!frame.vertices.empty()) {
+        double extent=0;
+        for (const auto& v:frame.vertices) {
+            extent=std::max({extent,std::abs(static_cast<double>(v.position.x)-camera.position.x),
+                std::abs(static_cast<double>(v.position.y)-camera.position.y),std::abs(static_cast<double>(v.position.z)-camera.position.z)});
+        }
+        debug_scale=static_cast<float>(std::max(1.0,extent/60000.0));
+        std::vector<engine::Vertex> packed_debug;
+        std::vector<std::uint32_t> debug_indices;
+        packed_debug.reserve(frame.vertices.size()); debug_attributes.reserve(frame.vertices.size());
+        for (const auto& v:frame.vertices) {
+            const Vec3 p{static_cast<float>((static_cast<double>(v.position.x)-camera.position.x)/debug_scale),
+                static_cast<float>((static_cast<double>(v.position.y)-camera.position.y)/debug_scale),
+                static_cast<float>((static_cast<double>(v.position.z)-camera.position.z)/debug_scale)};
+            packed_debug.push_back(make_vertex(p,{0,0,1})); debug_attributes.push_back({v.color,v.grid});
+            debug_indices.push_back(static_cast<std::uint32_t>(debug_indices.size()));
+        }
+        // Mesh ranges are metadata only; debug topology is selected per batch below.
+        while (debug_indices.size()%3) debug_indices.push_back(0);
+        auto builder=GeometryBuilder::from_buffer(packed);
+        builder.add_mesh(packed_debug,debug_indices); packed=builder.build();
+    }
+    std::vector<Vec2> uv;
+    if (draw_ui) {
+        auto builder=GeometryBuilder::from_buffer(packed);
+        const auto* data=ImGui::GetDrawData();
+        std::vector<Vertex_hud> hud;
+        std::vector<std::uint32_t> indices;
+        hud.reserve(static_cast<std::size_t>(data->TotalVtxCount)); uv.reserve(hud.capacity());
+        indices.reserve(static_cast<std::size_t>(data->TotalIdxCount));
+        for (const auto* list:data->CmdLists) {
+            for (const auto& v:list->VtxBuffer) {
+                const auto color=ImGui::ColorConvertU32ToFloat4(v.col);
+                hud.push_back({{v.pos.x,v.pos.y},{color.x,color.y,color.z,color.w}}); uv.push_back({v.uv.x,v.uv.y});
+            }
+            for (auto index:list->IdxBuffer) indices.push_back(index);
+        }
+        builder.append_ui(hud,indices); packed=builder.build();
+    }
+    const auto object_count=static_cast<std::uint32_t>(packed.objects.size());
+    VkPhysicalDeviceProperties limits{}; vkGetPhysicalDeviceProperties(physical,&limits);
+    const auto object_bytes=packed.objects.size()*sizeof(ObjectData);
+    const auto indirect_bytes=packed.commands.size()*sizeof(DrawIndexedIndirectCommand);
+    if (object_bytes>limits.limits.maxStorageBufferRange || indirect_bytes>limits.limits.maxStorageBufferRange
+        || (static_cast<std::uint64_t>(object_count)+63)/64>limits.limits.maxComputeWorkGroupCount[0])
+        throw std::length_error("Geometry exceeds Vulkan storage/dispatch limits");
+    ensure_buffer(geometry,std::max<std::size_t>(packed.bytes.size(),1),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT|VK_BUFFER_USAGE_INDEX_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    ensure_buffer(object_data,std::max<std::size_t>(object_bytes,sizeof(ObjectData)),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    ensure_buffer(indirect,std::max<std::size_t>(indirect_bytes,sizeof(DrawIndexedIndirectCommand)),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+    ensure_buffer(ui_uv,std::max<std::size_t>(uv.size()*sizeof(Vec2),1),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     create_target(width,height);
-    const VkDeviceSize bytes=frame.vertices.size()*sizeof(Vertex);
+    const VkDeviceSize bytes=debug_attributes.size()*sizeof(DebugAttributes);
     ensure_buffer(vertices,std::max(bytes,VkDeviceSize{1}),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     if (!surface) ensure_buffer(readback,static_cast<VkDeviceSize>(width)*height*4,VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     begin(); // Wait once, BEFORE overwriting memory used by the previous submission.
-    if (bytes) std::memcpy(vertices.mapped,frame.vertices.data(),static_cast<std::size_t>(bytes));
+    if (bytes) std::memcpy(vertices.mapped,debug_attributes.data(),static_cast<std::size_t>(bytes));
+    if (!packed.bytes.empty()) std::memcpy(geometry.mapped,packed.bytes.data(),packed.bytes.size());
+    if (object_bytes) std::memcpy(object_data.mapped,packed.objects.data(),object_bytes);
+    if (indirect_bytes) std::memcpy(indirect.mapped,packed.commands.data(),indirect_bytes);
+    if (!uv.empty()) std::memcpy(ui_uv.mapped,uv.data(),uv.size()*sizeof(Vec2));
+    const Basis basis=camera_basis(camera);
+    const auto vec4=[](Vec3 p) { return std::array<float,4>{p.x,p.y,p.z,0}; };
+    const float scale=1.0F/std::tan(camera.vertical_fov_degrees*kPi/360.0F);
+    const CameraPush push{vec4(basis.right),vec4(basis.up),vec4(basis.forward),vec4(camera.position),
+        {scale*static_cast<float>(scene_view.height)/static_cast<float>(scene_view.width),scale,kNearPlane,100000.0F}};
+    if (object_count) {
+        VkDescriptorBufferInfo descriptors[]{{object_data.handle,0,object_bytes},{indirect.handle,0,indirect_bytes}};
+        VkWriteDescriptorSet writes[2]{};
+        for (std::uint32_t i=0;i<2;++i) {
+            writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[i].dstSet=geometry_set;
+            writes[i].dstBinding=i; writes[i].descriptorCount=1; writes[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[i].pBufferInfo=&descriptors[i];
+        }
+        vkUpdateDescriptorSets(device,2,writes,0,nullptr);
+        vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,cull_pipeline);
+        vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,cull_layout,0,1,&geometry_set,0,nullptr);
+        vkCmdPushConstants(command,cull_layout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(push),&push);
+        vkCmdPushConstants(command,cull_layout,VK_SHADER_STAGE_COMPUTE_BIT,sizeof(push),sizeof(object_count),&object_count);
+        vkCmdDispatch(command,(object_count+63)/64,1,1);
+        VkBufferMemoryBarrier visibility{}; visibility.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+        visibility.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT; visibility.dstAccessMask=VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+        visibility.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED; visibility.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+        visibility.buffer=indirect.handle; visibility.size=VK_WHOLE_SIZE;
+        vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,0,0,nullptr,1,&visibility,0,nullptr);
+    }
     std::array<VkClearValue,2> clears{};
     clears[0].color={{39.0F/255,39.0F/255,41.0F/255,1}};
     clears[1].depthStencil={1,0};
@@ -802,25 +990,59 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
     VkRect2D scissor{{scene_view.x,scene_view.y},
         {static_cast<std::uint32_t>(scene_view.width),static_cast<std::uint32_t>(scene_view.height)}};
     vkCmdSetViewport(command,0,1,&viewport); vkCmdSetScissor(command,0,1,&scissor);
-    const VkDeviceSize offset=0;
-    vkCmdBindVertexBuffers(command,0,1,&vertices.handle,&offset);
-    const Basis basis=camera_basis(camera);
-    const auto vec4=[](Vec3 p) { return std::array<float,4>{p.x,p.y,p.z,0}; };
-    const float scale=1.0F/std::tan(camera.vertical_fov_degrees*kPi/360.0F);
-    const CameraPush push{vec4(basis.right),vec4(basis.up),vec4(basis.forward),vec4(camera.position),
-        {scale*static_cast<float>(scene_view.height)/static_cast<float>(scene_view.width),scale,kNearPlane,100000.0F}};
+    if (object_count) {
+        const VkDeviceSize packed_offset=packed.layout.sceneVertices;
+        vkCmdBindVertexBuffers(command,0,1,&geometry.handle,&packed_offset);
+        vkCmdBindIndexBuffer(command,geometry.handle,packed.layout.sceneIndices,VK_INDEX_TYPE_UINT32);
+        vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_GRAPHICS,object_pipeline);
+        vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_GRAPHICS,object_layout,0,1,&geometry_set,0,nullptr);
+        vkCmdPushConstants(command,object_layout,VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(push),&push);
+        for (std::uint32_t i=0;i<object_count;++i) {
+            vkCmdPushConstants(command,object_layout,VK_SHADER_STAGE_VERTEX_BIT,sizeof(push),sizeof(Vec4),&packed.tints[i]);
+            vkCmdDrawIndexedIndirect(command,indirect.handle,i*sizeof(DrawIndexedIndirectCommand),1,sizeof(DrawIndexedIndirectCommand));
+        }
+    }
+    const VkBuffer debug_buffers[]{geometry.handle,vertices.handle};
+    const VkDeviceSize debug_offsets[]{packed.layout.sceneVertices+debug_base*sizeof(engine::Vertex),0};
+    vkCmdBindVertexBuffers(command,0,2,debug_buffers,debug_offsets);
+    vkCmdBindIndexBuffer(command,geometry.handle,packed.layout.sceneIndices,VK_INDEX_TYPE_UINT32);
     vkCmdPushConstants(command,layout,VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(push),&push);
-    std::uint32_t first=0;
+    const Vec4 debug_transform{debug_scale,0,0,0};
+    vkCmdPushConstants(command,layout,VK_SHADER_STAGE_VERTEX_BIT,sizeof(push),sizeof(debug_transform),&debug_transform);
+    std::uint32_t first=debug_first;
     const auto batch=[&](VkPipeline pipeline, std::uint32_t count) {
-        if (count) { vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline); vkCmdDraw(command,count,1,first,0); }
+        if (count) { vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline); vkCmdDrawIndexed(command,count,1,first,0,0); }
         first+=count;
     };
-    batch(solid,frame.triangles); batch(wire,frame.lines);
+    batch(wire,frame.lines);
     batch(overlay_wire,frame.overlay_lines); batch(overlay_solid,frame.overlay_triangles);
     // UI/text shares the multisampled scene attachment, then one GPU resolve.
-    if (draw_ui) ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(),command);
+    if (custom_hud_indices) {
+        VkViewport full{0,0,static_cast<float>(width),static_cast<float>(height),0,1};
+        VkRect2D clip{{0,0},{static_cast<std::uint32_t>(width),static_cast<std::uint32_t>(height)}};
+        vkCmdSetViewport(command,0,1,&full); vkCmdSetScissor(command,0,1,&clip);
+        const VkDeviceSize hud_offset=packed.layout.hudVertices;
+        vkCmdBindVertexBuffers(command,0,1,&geometry.handle,&hud_offset);
+        vkCmdBindIndexBuffer(command,geometry.handle,packed.layout.hudIndices,VK_INDEX_TYPE_UINT32);
+        vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_GRAPHICS,hud_pipeline);
+        const Vec4 screen{static_cast<float>(width),static_cast<float>(height),0,0};
+        vkCmdPushConstants(command,hud_layout,VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(screen),&screen);
+        vkCmdDrawIndexed(command,custom_hud_indices,1,0,0,0);
+    }
+    if (draw_ui) {
+        ImGui_ImplVulkan_SetSharedGeometry(geometry.handle,packed.layout.hudVertices+custom_hud_vertices*sizeof(Vertex_hud),
+            packed.layout.hudIndices+custom_hud_indices*sizeof(std::uint32_t),ui_uv.handle);
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(),command);
+    }
     vkCmdEndRenderPass(command);
     if (!surface) {
+        if (object_count) {
+            VkBufferMemoryBarrier host{}; host.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+            host.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT; host.dstAccessMask=VK_ACCESS_HOST_READ_BIT;
+            host.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED; host.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+            host.buffer=indirect.handle; host.size=VK_WHOLE_SIZE;
+            vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,0,nullptr,1,&host,0,nullptr);
+        }
         VkBufferImageCopy copy{};
         copy.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
         copy.imageExtent={static_cast<std::uint32_t>(width),static_cast<std::uint32_t>(height),1};
@@ -835,10 +1057,12 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
     rendered=true;
     // With a window, keep recording: present() appends the swapchain blit and
     // submits scene + presentation together. No intermediate CPU/GPU round trip.
-    if (surface) return;
+    if (surface) { last_commands.clear(); return; }
     submit();
     check(vkWaitForFences(device,1,&fence,VK_TRUE,UINT64_MAX),"Wait for image readback");
     if (!surface) {
+        last_commands.resize(object_count);
+        if (object_count) std::memcpy(last_commands.data(),indirect.mapped,indirect_bytes);
         pixels.resize(static_cast<std::size_t>(width)*height);
         const auto* rgba=static_cast<const unsigned char*>(readback.mapped);
         for (std::size_t i=0;i<pixels.size();++i)
@@ -998,7 +1222,12 @@ void VulkanRenderer::Impl::cleanup() noexcept {
             ui=nullptr;
         }
         destroy_swapchain(); destroy_target(); destroy_buffer(vertices); destroy_buffer(readback);
-        for (auto pipeline : {solid,wire,overlay_wire,overlay_solid}) if (pipeline) vkDestroyPipeline(device,pipeline,nullptr);
+        for (auto* b:{&geometry,&object_data,&indirect,&ui_uv}) destroy_buffer(*b);
+        for (auto p:{object_pipeline,hud_pipeline,cull_pipeline}) if (p) vkDestroyPipeline(device,p,nullptr);
+        for (auto p:{object_layout,hud_layout,cull_layout}) if (p) vkDestroyPipelineLayout(device,p,nullptr);
+        if (geometry_pool) vkDestroyDescriptorPool(device,geometry_pool,nullptr);
+        if (geometry_set_layout) vkDestroyDescriptorSetLayout(device,geometry_set_layout,nullptr);
+        for (auto pipeline : {wire,overlay_wire,overlay_solid}) if (pipeline) vkDestroyPipeline(device,pipeline,nullptr);
         if (layout) vkDestroyPipelineLayout(device,layout,nullptr);
         if (render_pass) vkDestroyRenderPass(device,render_pass,nullptr);
         if (acquired) vkDestroySemaphore(device,acquired,nullptr);
@@ -1080,7 +1309,7 @@ void VulkanRenderer::enable_ui(float font_size) {
         info.PhysicalDevice=impl_->physical; info.Device=impl_->device;
         info.QueueFamily=impl_->graphics_family; info.Queue=impl_->graphics_queue;
         info.RenderPass=impl_->render_pass; info.MinImageCount=2; info.ImageCount=2;
-        info.MSAASamples=impl_->samples; info.DescriptorPoolSize=32;
+        info.SharedGeometry=true; info.MSAASamples=impl_->samples; info.DescriptorPoolSize=32;
         info.CheckVkResultFn=[](VkResult result) { check(result,"Vulkan UI backend"); };
         if (!ImGui_ImplVulkan_Init(&info)) throw std::runtime_error("Initialize Vulkan UI backend");
 #ifdef _WIN32
@@ -1147,6 +1376,25 @@ void VulkanRenderer::render(const Scene& scene, const EditorCamera& camera, Enti
         const auto frame=scene_geometry(scene,camera,selected,viewport.width,viewport.height);
         impl_->draw(frame,camera,width_,height_,pixels_,viewport,draw_ui);
     } catch (...) { shutdown(); throw; }
+}
+void VulkanRenderer::render_geometry(const GeometryBuffer& geometry,const EditorCamera& camera,RenderViewport viewport) {
+    geometry.validate();
+    if (!finite(camera.position)||!finite(camera.target)||!std::isfinite(camera.vertical_fov_degrees)
+        ||camera.vertical_fov_degrees<=0||camera.vertical_fov_degrees>=179) throw std::invalid_argument("Invalid camera");
+    if (viewport.x==0&&viewport.y==0&&viewport.width==0&&viewport.height==0) viewport={0,0,width_,height_};
+    if (viewport.x<0||viewport.y<0||viewport.width<=0||viewport.height<=0||viewport.width>width_||viewport.height>height_
+        ||viewport.x>width_-viewport.width||viewport.y>height_-viewport.height) throw std::invalid_argument("Invalid scene viewport");
+    initialize();
+    try {
+        const bool ui=impl_->ui_frame_open;
+        if (ui) { ImGui::SetCurrentContext(impl_->ui); ImGui::Render(); impl_->ui_frame_open=false; }
+        FrameGeometry frame; frame.geometry=geometry;
+        impl_->draw(frame,camera,width_,height_,pixels_,viewport,ui);
+    } catch (...) { shutdown(); throw; }
+}
+const std::vector<DrawIndexedIndirectCommand>& VulkanRenderer::last_draw_commands() const noexcept {
+    static const std::vector<DrawIndexedIndirectCommand> empty;
+    return impl_?impl_->last_commands:empty;
 }
 void VulkanRenderer::present() {
     if (!impl_) return;
