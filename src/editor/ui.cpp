@@ -137,7 +137,7 @@ void draw_ui() {
     ImGui::SameLine(215);
     if (ImGui::Button("Zapisz scenę")) save_scene();
     ImGui::SameLine();
-    if (ImGui::Button("Reset kamery")) { g.yaw=0.75F;g.pitch=0.42F;g.camera_distance=8; }
+    if (ImGui::Button("Reset kamery")) { g.orbit={}; }
     ImGui::SameLine();
     ImGui::TextDisabled("VULKAN  |  %u× MSAA  |  Perspektywa",g.renderer.antialiasing_samples());
     ImGui::End();
@@ -181,17 +181,35 @@ void draw_ui() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{10,4});
     panel("status",0,height-kFooterHeight,width,kFooterHeight,ImGuiWindowFlags_NoScrollbar);
     const auto status=utf8(g.status);
-    ImGui::TextDisabled("%s  |  %zu obiektów",status.c_str(),g.scene.entity_count());
+    ImGui::TextDisabled("%s  |  %zu obiektów  |  %.1f FPS",status.c_str(),g.scene.entity_count(),
+        static_cast<double>(ImGui::GetIO().Framerate));
     ImGui::End(); ImGui::PopStyleVar();
     // A focused hierarchy is not a textbox. Keep editor shortcuts available
     // there, but never delete/spawn while typing, dragging a field or in a popup.
     const auto popup_flags=ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel;
     if (!ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() && !ImGui::IsPopupOpen(nullptr,popup_flags)) {
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S,false)) save_scene();
+        else if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D,false)) duplicate_entity();
+        else if (!ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F,false)) frame_selected();
+        else if (!ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Q,false)) g.gizmo_mode=0;
+        else if (!ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_W,false)) g.gizmo_mode=1;
+        else if (!ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_E,false)) g.gizmo_mode=2;
         else if (!ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N,false)) add_primitive(engine::PrimitiveType::Cube);
         else if (ImGui::IsKeyPressed(ImGuiKey_Delete,false) && g.selected) {
             (void)g.scene.remove_entity(g.selected); g.selected=0; g.name_target=0;
             g.status=L"Usunięto obiekt";
+        }
+        if (!ImGui::GetIO().WantCaptureKeyboard) {
+            if (auto* entity=g.scene.find_entity(g.selected)) {
+                if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) entity->transform.position.x-=1;
+                if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) entity->transform.position.x+=1;
+                if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) entity->transform.position.y+=1;
+                if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) entity->transform.position.y-=1;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Equal) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd))
+                g.orbit.distance=std::max(2.0F,g.orbit.distance-1.0F);
+            if (ImGui::IsKeyPressed(ImGuiKey_Minus) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract))
+                g.orbit.distance=std::min(40.0F,g.orbit.distance+1.0F);
         }
     }
 }

@@ -97,6 +97,7 @@ struct ImGui_ImplVulkan_InitInfo
     // (Optional) Dynamic Rendering
     // Need to explicitly enable VK_KHR_dynamic_rendering extension to use this, even for Vulkan 1.3.
     bool                            UseDynamicRendering;
+    bool                            SharedGeometry; // Engine: Vertex_hud + separate UV stream, uint32 indices.
 #ifdef IMGUI_IMPL_VULKAN_HAS_DYNAMIC_RENDERING
     VkPipelineRenderingCreateInfoKHR PipelineRenderingCreateInfo;
 #endif
@@ -115,6 +116,10 @@ IMGUI_IMPL_API void             ImGui_ImplVulkan_RenderDrawData(ImDrawData* draw
 IMGUI_IMPL_API bool             ImGui_ImplVulkan_CreateFontsTexture();
 IMGUI_IMPL_API void             ImGui_ImplVulkan_DestroyFontsTexture();
 IMGUI_IMPL_API void             ImGui_ImplVulkan_SetMinImageCount(uint32_t min_image_count); // To override MinImageCount after initialization (e.g. if swap chain is recreated)
+
+// Engine-owned shared vertex/index buffer. The engine retains all ownership.
+IMGUI_IMPL_API void ImGui_ImplVulkan_SetSharedGeometry(VkBuffer geometry, VkDeviceSize vertices,
+    VkDeviceSize indices, VkBuffer uv);
 
 // Register a texture (VkDescriptorSet == ImTextureID)
 // FIXME: This is experimental in the sense that we are unsure how to best design/tackle this problem

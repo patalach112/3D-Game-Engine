@@ -38,6 +38,17 @@ add_custom_command(OUTPUT "${SHADER_DIR}/scene_shaders.hpp"
     DEPENDS "${SHADER_DIR}/scene.vert.spv" "${SHADER_DIR}/scene.frag.spv" cmake/embed_spirv.cmake
     VERBATIM)
 
+foreach(NAME IN ITEMS object.vert hud.vert hud.frag cull.comp debug.vert)
+    add_custom_command(OUTPUT "${SHADER_DIR}/${NAME}.spv"
+        COMMAND ${SHADER_COMMAND} "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/shaders/${NAME}" -o "${SHADER_DIR}/${NAME}.spv"
+        DEPENDS "src/engine/shaders/${NAME}" VERBATIM)
+endforeach()
+add_custom_command(OUTPUT "${SHADER_DIR}/geometry_shaders.hpp"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT_DIR=${SHADER_DIR}" "-DOUTPUT=${SHADER_DIR}/geometry_shaders.hpp"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_geometry_spirv.cmake"
+    DEPENDS "${SHADER_DIR}/object.vert.spv" "${SHADER_DIR}/hud.vert.spv" "${SHADER_DIR}/hud.frag.spv"
+        "${SHADER_DIR}/cull.comp.spv" "${SHADER_DIR}/debug.vert.spv" cmake/embed_geometry_spirv.cmake VERBATIM)
+
 # Exactly one native implementation is linked into the shared engine.
 if(WIN32)
     set(ENGINE_PLATFORM_SOURCE src/engine/windows.cpp)
@@ -65,6 +76,9 @@ if(ENGINE_USE_ASM)
 endif()
 
 add_library(engine_core SHARED
+    src/engine/objects.cpp
+    src/engine/camera_controller.cpp
+    "${SHADER_DIR}/geometry_shaders.hpp"
     src/engine/platform.cpp
     ${ENGINE_PLATFORM_SOURCE}
     src/engine/scene.cpp
@@ -173,6 +187,30 @@ if(BUILD_TESTING)
         target_compile_options(ui_tests PRIVATE -UNDEBUG)
     endif()
     add_test(NAME ui_tests COMMAND ui_tests)
+    foreach(TEST IN ITEMS geometry_tests geometry_gpu_tests)
+        add_executable(${TEST} tests/${TEST}.cpp)
+        target_link_libraries(${TEST} PRIVATE engine_core)
+        if(MSVC)
+            target_compile_options(${TEST} PRIVATE /UNDEBUG /utf-8)
+        else()
+            target_compile_options(${TEST} PRIVATE -UNDEBUG)
+        endif()
+        add_test(NAME ${TEST} COMMAND ${TEST})
+    endforeach()
+    if(WIN32)
+        # Exercise editor state without a window or Vulkan device. Building this
+        # target also catches header/implementation drift in app.cpp.
+        add_executable(editor_state_tests tests/editor_state_tests.cpp src/editor/app.cpp)
+        target_include_directories(editor_state_tests PRIVATE src/editor)
+        target_link_libraries(editor_state_tests PRIVATE engine_core user32)
+        target_compile_definitions(editor_state_tests PRIVATE UNICODE _UNICODE)
+        if(MSVC)
+            target_compile_options(editor_state_tests PRIVATE /UNDEBUG /W4 /permissive- /utf-8)
+        else()
+            target_compile_options(editor_state_tests PRIVATE -UNDEBUG -Wall -Wextra -Wpedantic)
+        endif()
+        add_test(NAME editor_state_tests COMMAND editor_state_tests)
+    endif()
     if(MINGW AND ENGINE_STATIC_MINGW_RUNTIME AND CMAKE_OBJDUMP)
         # Unlike rendering tests, this check does not need a Vulkan driver/GPU.
         add_test(NAME engine_runtime_dependencies
@@ -190,6 +228,7 @@ set_target_properties(engine_editor PROPERTIES INSTALL_RPATH "$ORIGIN")
 install(TARGETS engine_editor engine_core
     RUNTIME DESTINATION . LIBRARY DESTINATION . ARCHIVE DESTINATION lib)
 install(FILES README.md DESTINATION .)
+install(FILES docs/objects.md DESTINATION docs)
 install(FILES src/engine/ui/third_party/imgui/LICENSE.txt DESTINATION licenses RENAME Dear-ImGui.txt)
 set(CPACK_GENERATOR ZIP)
 set(CPACK_PACKAGE_NAME Starter3DEngine)

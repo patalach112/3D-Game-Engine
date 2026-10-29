@@ -17,13 +17,26 @@ void render_frame(HWND hwnd) {
             update_layout();
             const auto now=std::chrono::steady_clock::now();
             static auto previous=now;
-            const float delta=std::clamp(std::chrono::duration<float>(now-previous).count(),0.001F,0.1F);
+            const float elapsed=std::chrono::duration<float>(now-previous).count();
+            // ImGui averages FPS over recent frames. Use real elapsed time:
+            // capping it at 0.1 s would incorrectly report at least 10 FPS.
+            const float delta=elapsed>0.0F?elapsed:1.0F/60.0F;
             previous=now;
             g.renderer.begin_ui_frame(delta);
             LOG_DEBUG("render", "Rendering frame at %dx%d", g.width, g.height);
             draw_ui();
-            update_camera();
             const auto view=view_rect();
+            const auto& io=ImGui::GetIO();
+            engine::OrbitInput input;
+            input.mouse={io.MousePos.x,io.MousePos.y}; input.wheel=io.MouseWheel;
+            input.rightDown=ImGui::IsMouseDown(ImGuiMouseButton_Right);
+            input.rightPressed=ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+            input.focused=GetForegroundWindow()==hwnd && !io.AppFocusLost;
+            input.pointerValid=ImGui::IsMousePosValid();
+            input.blockStart=ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel);
+            engine::update_orbit(g.orbit,input,{static_cast<int>(view.left),static_cast<int>(view.top),
+                static_cast<int>(view.right-view.left),static_cast<int>(view.bottom-view.top)});
+            update_camera();
             g.renderer.render(g.scene,g.camera,g.selected,
                 {static_cast<int>(view.left),static_cast<int>(view.top),
                  static_cast<int>(view.right-view.left),static_cast<int>(view.bottom-view.top)});

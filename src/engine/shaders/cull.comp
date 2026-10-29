@@ -1,0 +1,16 @@
+#version 450
+layout(local_size_x=64) in;
+struct ObjectData { vec3 position; int rotation; float scale; uint texturePair; float radius; uint padding; };
+struct Command { uint indexCount; uint instanceCount; uint firstIndex; int vertexOffset; uint firstInstance; };
+layout(std430,set=0,binding=0) readonly buffer Objects { ObjectData objects[]; };
+layout(std430,set=0,binding=1) buffer Commands { Command commands[]; };
+layout(push_constant) uniform Camera { vec4 right; vec4 up; vec4 forward; vec4 eye; vec4 projection; uint count; } camera;
+void main() {
+    uint i=gl_GlobalInvocationID.x; if(i>=camera.count) return;
+    vec3 delta=objects[i].position-camera.eye.xyz;
+    float x=dot(delta,camera.right.xyz), y=dot(delta,camera.up.xyz), z=dot(delta,camera.forward.xyz);
+    float r=objects[i].radius+1e-4*max(1.0,objects[i].radius+length(delta)),fx=camera.projection.x,fy=camera.projection.y;
+    bool visible=z+r>=camera.projection.z && z-r<=camera.projection.w
+        &&abs(x*fx)<=z+r*sqrt(fx*fx+1) &&abs(y*fy)<=z+r*sqrt(fy*fy+1);
+    commands[i].instanceCount=visible?1u:0u;
+}

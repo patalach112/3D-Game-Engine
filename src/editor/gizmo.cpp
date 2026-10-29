@@ -37,7 +37,9 @@ bool hit_gizmo(int sx, int sy, int view_w, int view_h, engine::Entity& entity) {
     g.drag_sign = chosen_sign;
     const engine::Vec3 axis = mul(axes[chosen], chosen_sign);
     const engine::Vec3 view = normalized(sub(g.camera.target, g.camera.position));
-    engine::Vec3 normal = sub(view, mul(axis, dot(view, axis)));
+    // Rotation needs the plane perpendicular to the axis; translation/scale
+    // need a camera-facing plane containing that axis.
+    engine::Vec3 normal = g.gizmo_mode == 1 ? axis : sub(view, mul(axis, dot(view, axis)));
     if (magnitude(normal) < 0.0001F) {
         normal = cross(axis, std::abs(axis.y) < 0.9F ? engine::Vec3{0, 1, 0} : engine::Vec3{1, 0, 0});
     }
@@ -49,6 +51,8 @@ bool hit_gizmo(int sx, int sy, int view_w, int view_h, engine::Entity& entity) {
         return false;
     }
     g.drag_start_position = entity.transform.position;
+    g.drag_start_rotation = entity.transform.rotation;
+    g.drag_start_scale = entity.transform.scale;
     return true;
 }
 

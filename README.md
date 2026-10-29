@@ -22,7 +22,7 @@ rysujące piksele na CPU. Nie używamy raylib, OpenGL ani Direct3D.
 Backend tworzy instancję Vulkan, wybiera urządzenie i kolejki, zarządza pamięcią,
 buforami wierzchołków, obrazami koloru/głębokości, render passem, pipeline'ami,
 command bufferem i synchronizacją. Karty zintegrowane są obsługiwane; dedykowane
-mają priorytet. Nie wymaga geometry shaderów, descriptor indexing ani bindless
+mają priorytet. Wymaga kolejki graphics+compute i drawIndirectFirstInstance; nie wymaga geometry shaderów, descriptor indexing ani bindless
 textures, ponieważ obecna scena nie ma tekstur i compute cullingu.
 Warstwa `VK_LAYER_KHRONOS_validation` i debug messenger włączają się opcjonalnie
 w konfiguracji Debug, jeśli są zainstalowane. Ich brak nie blokuje startu.
@@ -327,3 +327,19 @@ Zgodnie z podziałem pracy: kolejne zmiany layoutu są po stronie `src/editor/`,
 backend/atlas/render pass i publiczne API po stronie `src/engine/` + `include/engine/`.
 W tej zmianie integracja edytora jest wykonana za jednorazową zgodą na edycję
 wszystkich plików. Nie oznacza to przeniesienia logiki edytora do DLL silnika.
+
+
+## Zwarta geometria i obracanie kamery
+
+Nowe API: [`engine/objects.hpp`](include/engine/objects.hpp), implementacja
+`src/engine/objects.cpp`. Wierzchołki HUD (24 B) i 3D (12 B) oraz indeksy HUD/3D
+trafiają do jednego VkBuffer w tej kolejności. ObjectData (32 B) i indirect (20 B)
+są wyłącznie dla instancji 3D. Compute shader wylicza widoczność; vertex shader
+transformuje obiekty. Indirect używa signed vertexOffset zgodnego z Vulkanem.
+
+Kamera korzysta z bieżącej klatki ImGui i kontrolera w engine zamiast starego
+filtra WantCaptureMouse w Win32. PPM nad 3D rozpoczyna orbitę; popup i utrata
+fokusu są obsługiwane jawnie. Dokładny ABI, pakowanie half/normalnej/rotacji,
+przykłady API, wymagania urządzenia i zasady współdzielenia bufora opisuje
+[dokumentacja obiektów](docs/objects.md). Testy CPU: geometry_tests; testy
+GPU shared-buffer/culling: geometry_gpu_tests.

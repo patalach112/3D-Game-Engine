@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/export.hpp"
+#include "engine/objects.hpp"
 
 #include "engine/scene/scene.hpp"
 
@@ -71,6 +72,11 @@ public:
     void render(const Scene& scene, const EditorCamera& camera, EntityId selected);
     void render(const Scene& scene, const EditorCamera& camera, EntityId selected,
                 RenderViewport viewport);
+    // One packed geometry buffer: HUD vertices, 3D vertices, HUD indices, 3D indices.
+    // ObjectData and indirect commands are 3D-only SSBOs; compute updates visibility.
+    void render_geometry(const GeometryBuffer& geometry,const EditorCamera& camera,RenderViewport viewport = {});
+    // GPU-produced visibility, available after headless render/readback only.
+    [[nodiscard]] const std::vector<DrawIndexedIndirectCommand>& last_draw_commands() const noexcept;
     void present();
 
     [[nodiscard]] int width() const noexcept { return width_; }
