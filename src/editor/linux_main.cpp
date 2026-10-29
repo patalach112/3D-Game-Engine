@@ -88,7 +88,7 @@ int run_editor() {
 
     LOG_INFO("linux", "Initializing Vulkan renderer");
     renderer.initialize();
-    LOG_INFO("linux", "Vulkan renderer initialized: " + renderer.device_name());
+    LOG_INFO("linux", "Vulkan renderer initialized: %s", renderer.device_name().c_str());
     print_help();
     render(scene, renderer, camera, selected);
     std::string line;

@@ -29,7 +29,7 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
         state.renderer.set_window(main_window->native_handle().instance,hwnd);
         LOG_INFO("editor", "Creating Vulkan renderer");
         state.renderer.initialize();
-        LOG_INFO("editor", "Vulkan renderer initialized: " + state.renderer.device_name());
+        LOG_INFO("editor", "Vulkan renderer initialized: %s", state.renderer.device_name().c_str());
         state.renderer.enable_ui();
         LOG_INFO("editor", "UI enabled");
         state.ready=true;
@@ -50,10 +50,9 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
     } catch (const std::exception& error) {
         state.ready=false;
         state.renderer.shutdown();
-        LOG_ERROR("editor", std::string("Vulkan error: ") + error.what());
+        LOG_ERROR("editor", "Vulkan error: %s", error.what());
         MessageBoxA(hwnd,error.what(),"Vulkan initialization error",MB_OK|MB_ICONERROR);
         return 1;
-    } finally {
-        engine::log_shutdown();
     }
+    engine::log_shutdown();
 }
