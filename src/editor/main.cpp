@@ -33,26 +33,52 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
         state.renderer.enable_ui();
         LOG_INFO("editor", "UI enabled");
         state.ready=true;
-        // Refresh hover, caret, keyboard navigation and dragging even in an idle scene.
-        SetTimer(hwnd,1,16,nullptr);
         ShowWindow(hwnd,show);
         UpdateWindow(hwnd);
+
+        // Drive painting from a deadline-aware message loop. A Win32 SetTimer is
+        // clamped by the system timer resolution and made "unlimited" behave like
+        // ~60 FPS; this loop can genuinely run uncapped while still sleeping when
+        // a finite limit is selected.
         MSG msg{};
-        BOOL result{};
-        while ((result=GetMessageW(&msg,nullptr,0,0))>0) {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+        bool running=true;
+        int exit_code=0;
+        while (running) {
+            while (PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) {
+                if (msg.message==WM_QUIT) {
+                    running=false;
+                    exit_code=static_cast<int>(msg.wParam);
+                    break;
+                }
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+            if (!running) break;
+
+            if (state.ready && !state.renderer_failed && !IsIconic(hwnd)) {
+                const auto now=editor::FrameClock::now();
+                if (editor::frame_due(state,now)) {
+                    InvalidateRect(hwnd,nullptr,FALSE);
+                    UpdateWindow(hwnd);
+                    continue;
+                }
+                const DWORD wait=editor::frame_wait_milliseconds(state,now);
+                MsgWaitForMultipleObjectsEx(0,nullptr,wait,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
+            } else {
+                MsgWaitForMultipleObjectsEx(0,nullptr,INFINITE,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
+            }
         }
         state.ready=false;
         state.renderer.shutdown();
         LOG_INFO("editor", "Editor shutdown");
-        return result<0?1:static_cast<int>(msg.wParam);
+        engine::log_shutdown();
+        return exit_code;
     } catch (const std::exception& error) {
         state.ready=false;
         state.renderer.shutdown();
         LOG_ERROR("editor", "Vulkan error: %s", error.what());
         MessageBoxA(hwnd,error.what(),"Vulkan initialization error",MB_OK|MB_ICONERROR);
+        engine::log_shutdown();
         return 1;
     }
-    engine::log_shutdown();
 }

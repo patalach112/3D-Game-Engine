@@ -225,7 +225,7 @@ struct FrameGeometry {
     std::uint32_t lines{}, overlay_lines{}, overlay_triangles{};
 };
 FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, EntityId selected,
-                             int width, int height) {
+                             int width, int height, bool grid_visible) {
     std::vector<DebugVertex> lines, overlay_lines, overlay_triangles;
     const auto line = [](std::vector<DebugVertex>& out, Vec3 a, Vec3 b, Vec3 color, float grid = 0.0F) {
         out.push_back({a, color, grid}); out.push_back({b, color, grid});
@@ -284,38 +284,40 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
     }
     // Ground grid bounds follow the frustum, rather than a fixed little patch.
     const Basis basis=camera_basis(camera);
-    const float v_tan=std::tan(camera.vertical_fov_degrees*kPi/360.0F);
-    const float h_tan=v_tan*static_cast<float>(width)/static_cast<float>(height);
-    float gx0=camera.position.x-10, gx1=camera.position.x+10;
-    float gz0=camera.position.z-10, gz1=camera.position.z+10;
-    const float horizon=std::max(50.0F,std::abs(camera.position.y)*100.0F);
-    for (float x : {-1.0F,1.0F}) for (float y : {-1.0F,1.0F}) {
-        const Vec3 dir=add(basis.forward,add(multiply(basis.right,x*h_tan),multiply(basis.up,y*v_tan)));
-        const float hit_t=std::abs(dir.y)>0.0001F?-camera.position.y/dir.y:-1;
-        const float distance=hit_t>0?std::min(hit_t,horizon):horizon;
-        const Vec3 hit=add(camera.position,multiply(dir,distance));
-        gx0=std::min(gx0,hit.x); gx1=std::max(gx1,hit.x);
-        gz0=std::min(gz0,hit.z); gz1=std::max(gz1,hit.z);
-    }
-    const float range=std::max(gx1-gx0,gz1-gz0);
-    // Nice-steps: wybierz krok z serii 1-2-5-10-20-50... aby linie miały rozmiar ~1/10 range.
-    const float raw_step=range/12.0F;
-    float magnitude=1.0F;
-    while (magnitude*2.0F<=raw_step) magnitude*=2.0F;
-    float step=magnitude;
-    while (step*5.0F<=raw_step) step*=5.0F;
-    step=std::max(step,1.0F);
-    // Bounded iteration also protects against hostile/very large scene coordinates.
-    for (int axis=0;axis<2;++axis) {
-        const float start=std::floor((axis?gz0:gx0)/step)*step;
-        const float end=axis?gz1:gx1;
-        for (int i=0;i<2048;++i) {
-            const float c=start+static_cast<float>(i)*step;
-            if (c>end) break;
-            const bool major=std::abs(std::remainder(c,5.0F*step))<0.01F;
-            const Vec3 color=rgb(major?0x008A8A90U:0x005A5A5EU);
-            if (axis) line(lines,{gx0-20,0,c},{gx1+20,0,c},color,1);
-            else line(lines,{c,0,gz0-20},{c,0,gz1+20},color,1);
+    if (grid_visible) {
+        const float v_tan=std::tan(camera.vertical_fov_degrees*kPi/360.0F);
+        const float h_tan=v_tan*static_cast<float>(width)/static_cast<float>(height);
+        float gx0=camera.position.x-10, gx1=camera.position.x+10;
+        float gz0=camera.position.z-10, gz1=camera.position.z+10;
+        const float horizon=std::max(50.0F,std::abs(camera.position.y)*100.0F);
+        for (float x : {-1.0F,1.0F}) for (float y : {-1.0F,1.0F}) {
+            const Vec3 dir=add(basis.forward,add(multiply(basis.right,x*h_tan),multiply(basis.up,y*v_tan)));
+            const float hit_t=std::abs(dir.y)>0.0001F?-camera.position.y/dir.y:-1;
+            const float distance=hit_t>0?std::min(hit_t,horizon):horizon;
+            const Vec3 hit=add(camera.position,multiply(dir,distance));
+            gx0=std::min(gx0,hit.x); gx1=std::max(gx1,hit.x);
+            gz0=std::min(gz0,hit.z); gz1=std::max(gz1,hit.z);
+        }
+        const float range=std::max(gx1-gx0,gz1-gz0);
+        // Nice-steps: wybierz krok z serii 1-2-5-10-20-50... aby linie miały rozmiar ~1/10 range.
+        const float raw_step=range/12.0F;
+        float magnitude=1.0F;
+        while (magnitude*2.0F<=raw_step) magnitude*=2.0F;
+        float step=magnitude;
+        while (step*5.0F<=raw_step) step*=5.0F;
+        step=std::max(step,1.0F);
+        // Bounded iteration also protects against hostile/very large scene coordinates.
+        for (int axis=0;axis<2;++axis) {
+            const float start=std::floor((axis?gz0:gx0)/step)*step;
+            const float end=axis?gz1:gx1;
+            for (int i=0;i<2048;++i) {
+                const float c=start+static_cast<float>(i)*step;
+                if (c>end) break;
+                const bool major=std::abs(std::remainder(c,5.0F*step))<0.01F;
+                const Vec3 color=rgb(major?0x008A8A90U:0x005A5A5EU);
+                if (axis) line(lines,{gx0-20,0,c},{gx1+20,0,c},color,1);
+                else line(lines,{c,0,gz0-20},{c,0,gz1+20},color,1);
+            }
         }
     }
     if (const Entity* entity=scene.find_entity(selected)) {
@@ -416,7 +418,8 @@ struct VulkanRenderer::Impl {
     void begin();
     void submit(VkSemaphore wait = VK_NULL_HANDLE, VkSemaphore signal = VK_NULL_HANDLE);
     void draw(const FrameGeometry& frame, const EditorCamera& camera, int width, int height,
-              std::vector<std::uint32_t>& pixels, RenderViewport scene_view, bool draw_ui);
+              std::vector<std::uint32_t>& pixels, RenderViewport scene_view, bool draw_ui,
+              Vec3 clear_color);
     void present();
 };
 
@@ -891,7 +894,7 @@ void VulkanRenderer::Impl::submit(VkSemaphore wait, VkSemaphore signal) {
 }
 void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& camera,
                                 int width, int height, std::vector<std::uint32_t>& pixels,
-                                RenderViewport scene_view, bool draw_ui) {
+                                RenderViewport scene_view, bool draw_ui, Vec3 clear_color) {
     auto packed=frame.geometry;
     const auto custom_hud_indices=packed.layout.hudIndexCount;
     const auto custom_hud_vertices=packed.layout.hudVertexCount;
@@ -985,7 +988,7 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
         vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,0,0,nullptr,1,&visibility,0,nullptr);
     }
     std::array<VkClearValue,2> clears{};
-    clears[0].color={{39.0F/255,39.0F/255,41.0F/255,1}};
+    clears[0].color={{clear_color.x,clear_color.y,clear_color.z,1}};
     clears[1].depthStencil={1,0};
     VkRenderPassBeginInfo pass{}; pass.sType=VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     pass.renderPass=render_pass; pass.framebuffer=framebuffer;
@@ -1363,6 +1366,12 @@ bool VulkanRenderer::handle_ui_message(void* window, unsigned int message,
 unsigned int VulkanRenderer::antialiasing_samples() const noexcept {
     return impl_?static_cast<unsigned int>(impl_->samples):1;
 }
+void VulkanRenderer::set_clear_color(Vec3 color) {
+    if (!finite(color) || color.x < 0.0F || color.x > 1.0F
+        || color.y < 0.0F || color.y > 1.0F || color.z < 0.0F || color.z > 1.0F)
+        throw std::invalid_argument("Clear color components must be finite and between 0 and 1");
+    clear_color_ = color;
+}
 void VulkanRenderer::resize(int width, int height) {
     width_=std::max(1,width); height_=std::max(1,height);
 }
@@ -1389,8 +1398,8 @@ void VulkanRenderer::render(const Scene& scene, const EditorCamera& camera, Enti
             ImGui::Render();
             impl_->ui_frame_open=false;
         }
-        const auto frame=scene_geometry(scene,camera,selected,viewport.width,viewport.height);
-        impl_->draw(frame,camera,width_,height_,pixels_,viewport,draw_ui);
+        const auto frame=scene_geometry(scene,camera,selected,viewport.width,viewport.height,grid_visible_);
+        impl_->draw(frame,camera,width_,height_,pixels_,viewport,draw_ui,clear_color_);
     } catch (...) { shutdown(); throw; }
 }
 void VulkanRenderer::render_geometry(const GeometryBuffer& geometry,const EditorCamera& camera,RenderViewport viewport) {
@@ -1405,7 +1414,7 @@ void VulkanRenderer::render_geometry(const GeometryBuffer& geometry,const Editor
         const bool ui=impl_->ui_frame_open;
         if (ui) { ImGui::SetCurrentContext(impl_->ui); ImGui::Render(); impl_->ui_frame_open=false; }
         FrameGeometry frame; frame.geometry=geometry;
-        impl_->draw(frame,camera,width_,height_,pixels_,viewport,ui);
+        impl_->draw(frame,camera,width_,height_,pixels_,viewport,ui,clear_color_);
     } catch (...) { shutdown(); throw; }
 }
 const std::vector<DrawIndexedIndirectCommand>& VulkanRenderer::last_draw_commands() const noexcept {

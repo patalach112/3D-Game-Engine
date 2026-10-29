@@ -24,9 +24,6 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
         auto* limits=reinterpret_cast<MINMAXINFO*>(lp);
         limits->ptMinTrackSize.x=900; limits->ptMinTrackSize.y=600; return 0;
     }
-    case WM_TIMER:
-        if (wp==1 && g.ready && !IsIconic(hwnd)) InvalidateRect(hwnd,nullptr,FALSE);
-        return 0;
     case WM_SIZE:
         if (wp!=SIZE_MINIMIZED) InvalidateRect(hwnd,nullptr,FALSE);
         return 0;
@@ -104,7 +101,7 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
         g.orbit.dragging=false; g.drag_axis=-1; return 0;
     case WM_CLOSE:
         LOG_INFO("editor", "Window closing");
-        KillTimer(hwnd,1); g.ready=false;
+        g.ready=false;
         // Release Vulkan surface and UI resources before destroying their HWND.
         g.renderer.shutdown(); DestroyWindow(hwnd); return 0;
     case WM_DESTROY: PostQuitMessage(0); return 0;

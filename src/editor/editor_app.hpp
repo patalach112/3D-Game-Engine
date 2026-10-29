@@ -10,6 +10,7 @@
 #include "engine/render/vulkan_renderer.hpp"
 #include "engine/ui.hpp"
 #include "engine/camera_controller.hpp"
+#include <chrono>
 #include <string>
 
 namespace editor {
@@ -24,6 +25,14 @@ struct App {
     bool ready{}, renderer_failed{};
     int width{1280}, height{800};
     int left_width{250}, right_width{320}, bottom_height{180};
+
+    // 0 means unlimited. The deadline is managed by the message-loop frame pacer.
+    int fps_limit{60};
+    std::chrono::steady_clock::time_point next_frame{};
+    std::chrono::steady_clock::time_point previous_frame{};
+    bool grid_visible{true};
+    engine::Vec3 background_color{39.0F / 255.0F, 39.0F / 255.0F, 41.0F / 255.0F};
+
     engine::OrbitState orbit;
     int drag_axis{-1};
     float drag_sign{1.0F};
@@ -46,6 +55,12 @@ struct App {
     char notes[8192]{};
 };
 App& app();
+using FrameClock = std::chrono::steady_clock;
+[[nodiscard]] bool frame_due(const App& state, FrameClock::time_point now) noexcept;
+void schedule_next_frame(App& state, FrameClock::time_point started,
+                         FrameClock::time_point completed) noexcept;
+[[nodiscard]] unsigned long frame_wait_milliseconds(const App& state,
+                                                     FrameClock::time_point now) noexcept;
 engine::Vec3 add(engine::Vec3 a,engine::Vec3 b);
 engine::Vec3 sub(engine::Vec3 a,engine::Vec3 b);
 engine::Vec3 mul(engine::Vec3 a,float n);
