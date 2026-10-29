@@ -205,6 +205,83 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBit
     std::cerr << "Vulkan validation: " << message->pMessage << '\n';
     return VK_FALSE;
 }
+void SoftwareRenderer::render(const Scene& scene,const EditorCamera& camera,EntityId selected) {
+    std::fill(pixels_.begin(),pixels_.end(),kBackground);
+    std::fill(depth_.begin(),depth_.end(),std::numeric_limits<float>::infinity());
+    const Basis basis=camera_basis(camera);
+    const float focal=(static_cast<float>(height_)*0.5F)/std::tan(camera.vertical_fov_degrees*kPi/360.0F);
+    // Project from camera space. Values that overflow or land behind the near
+    // plane are reported as invisible instead of producing NaN screen coords.
+    const auto project_camera=[&](const CameraPoint& p)->ScreenPoint {
+        if(p.z<kNearPlane||!std::isfinite(p.x)||!std::isfinite(p.y)||!std::isfinite(p.z)) return {};
+        const float sx=static_cast<float>(width_)*0.5F+p.x*focal/p.z;
+        const float sy=static_cast<float>(height_)*0.5F-p.y*focal/p.z;
+        if(!std::isfinite(sx)||!std::isfinite(sy)) return {};
+        return {sx,sy,p.z,true};
+    };
+    const auto project=[&](Vec3 world)->ScreenPoint {
+        return project_camera(to_camera(world,camera,basis));
+    };
+    const auto put_pixel=[&](int x,int y,float z,std::uint32_t color,bool depth_test) {
+        if(x<0||x>=width_||y<0||y>=height_) return;
+        const auto index=static_cast<std::size_t>(y)*static_cast<std::size_t>(width_)+static_cast<std::size_t>(x);
+        if(!depth_test) { pixels_[index]=color; return; }
+        if(z<depth_[index]) { pixels_[index]=color; depth_[index]=z; return; }
+        if(std::isfinite(depth_[index])) {
+            const float tolerance=depth_[index]*0.0001F;
+            if(z<=depth_[index]+tolerance) pixels_[index]=color;
+        }
+    };
+    const auto draw_line=[&](Vec3 a,Vec3 b,std::uint32_t color,bool depth_test,int thickness,bool fade) {
+        CameraPoint ca=to_camera(a,camera,basis),cb=to_camera(b,camera,basis);
+        if(ca.z<kNearPlane&&cb.z<kNearPlane) return;
+        const float near_clip=kNearPlane+0.002F;
+        if(ca.z<near_clip) {
+            const float t=(near_clip-ca.z)/(cb.z-ca.z);
+            a=add(a,multiply(subtract(b,a),t));
+        } else if(cb.z<near_clip) {
+            const float t=(near_clip-ca.z)/(cb.z-ca.z);
+            b=add(a,multiply(subtract(b,a),t));
+        }
+        const ScreenPoint pa=project(a),pb=project(b);
+        if(!pa.visible||!pb.visible) return;
+        const float full_dx=pb.x-pa.x,full_dy=pb.y-pa.y;
+        const float inv_start_full=1.0F/pa.depth,inv_end_full=1.0F/pb.depth;
+        float t0=0.0F,t1=1.0F;
+        const auto clip_test=[&](float p,float q) {
+            if(std::abs(p)<1.0e-8F) return q>=0.0F;
+            const float ratio=q/p;
+            if(p<0.0F) { if(ratio>t1) return false; t0=std::max(t0,ratio); }
+            else { if(ratio<t0) return false; t1=std::min(t1,ratio); }
+            return true;
+        };
+        if(!clip_test(-full_dx,pa.x)||!clip_test(full_dx,static_cast<float>(width_-1)-pa.x)
+          ||!clip_test(-full_dy,pa.y)||!clip_test(full_dy,static_cast<float>(height_-1)-pa.y)||t0>t1) return;
+        const auto at=[&](float t) {
+            const float inv=inv_start_full+(inv_end_full-inv_start_full)*t;
+            return ScreenPoint{pa.x+full_dx*t,pa.y+full_dy*t,1.0F/inv,true};
+        };
+        const ScreenPoint first=at(t0),last=at(t1);
+        const float dx=last.x-first.x,dy=last.y-first.y;
+        const float inv_start=1.0F/first.depth,inv_end=1.0F/last.depth;
+        const int steps=std::max(1,static_cast<int>(std::ceil(std::max(std::abs(dx),std::abs(dy)))));
+        for(int i=0;i<=steps;++i) {
+            const float t=static_cast<float>(i)/static_cast<float>(steps);
+            const float z=1.0F/(inv_start+(inv_end-inv_start)*t);
+            std::uint32_t sample=color;
+            if(fade) {
+                const float strength=std::clamp(1.0F-std::max(0.0F,z-30.0F)/470.0F,0.85F,1.0F);
+                const auto mix=[strength](std::uint32_t fg,std::uint32_t bg,int shift) {
+                    return static_cast<std::uint32_t>(((fg>>shift)&255U)*strength+((bg>>shift)&255U)*(1-strength));
+                };
+                sample=(mix(color,kBackground,16)<<16U)|(mix(color,kBackground,8)<<8U)|mix(color,kBackground,0);
+            }
+            const int px=static_cast<int>(std::lround(first.x+dx*t));
+            const int py=static_cast<int>(std::lround(first.y+dy*t));
+            for(int oy=0;oy<thickness;++oy) for(int ox=0;ox<thickness;++ox)
+                put_pixel(px+ox,py+oy,z,sample,depth_test);
+        }
+    };
 
 struct FrameGeometry {
     std::vector<Vertex> vertices;
