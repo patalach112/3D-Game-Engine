@@ -1,4 +1,5 @@
 #include "editor_app.hpp"
+#include "engine/log.hpp"
 #include <algorithm>
 #include <exception>
 #include <chrono>
@@ -19,6 +20,7 @@ void render_frame(HWND hwnd) {
             const float delta=std::clamp(std::chrono::duration<float>(now-previous).count(),0.001F,0.1F);
             previous=now;
             g.renderer.begin_ui_frame(delta);
+            LOG_DEBUG("render", "Rendering frame at %dx%d", g.width, g.height);
             draw_ui();
             update_camera();
             const auto view=view_rect();

@@ -1,4 +1,5 @@
 #include "editor_app.hpp"
+#include "engine/log.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -225,6 +226,7 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
     case WM_CAPTURECHANGED:
         g.orbiting=false; g.drag_axis=-1; return 0;
     case WM_CLOSE:
+        LOG_INFO("editor", "Window closing");
         KillTimer(hwnd,1); g.ready=false;
         // Release Vulkan surface and UI resources before destroying their HWND.
         g.renderer.shutdown(); DestroyWindow(hwnd); return 0;

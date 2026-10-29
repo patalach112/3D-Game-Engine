@@ -1,4 +1,5 @@
 #include "editor_app.hpp"
+#include "engine/log.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -8,6 +9,7 @@ namespace editor {
 
 App& app() {
     static App instance;
+    LOG_DEBUG("editor", "App initialized");
     return instance;
 }
 
@@ -42,6 +44,7 @@ engine::Vec3 normalized(engine::Vec3 a) {
 
 void update_camera() {
     App& g = app();
+    LOG_DEBUG("camera", "Yaw=%.2f Pitch=%.2f Dist=%.2f", g.yaw, g.pitch, g.camera_distance);
     const auto& target = g.camera.target;
     const float cp = std::cos(g.pitch);
     g.camera.position = {
@@ -160,6 +163,7 @@ void commit_field_edit() {
 
 void duplicate_entity() {
     App& g = app();
+    LOG_DEBUG("editor", "Duplicating entity");
     auto* source = g.scene.find_entity(g.selected);
     if (!source) return;
     auto& copy = g.scene.create_entity(

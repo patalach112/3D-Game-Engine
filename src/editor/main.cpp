@@ -1,10 +1,13 @@
 #include "editor_app.hpp"
 #include "engine/platform.hpp"
+#include "engine/log.hpp"
 #include <exception>
 #include <fstream>
 
 int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
     SetProcessDPIAware();
+    engine::log_init("engine.log");
+    LOG_INFO("editor", "Starter 3D Editor start");
     auto& state=editor::app();
     state.scene.create_entity("Cube 0").transform.position={0,0.5F,0};
     state.selected=1;
@@ -24,8 +27,11 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
         main_window=engine::createnewwindow(config);
         hwnd=reinterpret_cast<HWND>(main_window->native_handle().window);
         state.renderer.set_window(main_window->native_handle().instance,hwnd);
+        LOG_INFO("editor", "Creating Vulkan renderer");
         state.renderer.initialize();
+        LOG_INFO("editor", "Vulkan renderer initialized: " + state.renderer.device_name());
         state.renderer.enable_ui();
+        LOG_INFO("editor", "UI enabled");
         state.ready=true;
         // Refresh hover, caret, keyboard navigation and dragging even in an idle scene.
         SetTimer(hwnd,1,16,nullptr);
@@ -39,11 +45,15 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
         }
         state.ready=false;
         state.renderer.shutdown();
+        LOG_INFO("editor", "Editor shutdown");
         return result<0?1:static_cast<int>(msg.wParam);
     } catch (const std::exception& error) {
         state.ready=false;
         state.renderer.shutdown();
+        LOG_ERROR("editor", std::string("Vulkan error: ") + error.what());
         MessageBoxA(hwnd,error.what(),"Vulkan initialization error",MB_OK|MB_ICONERROR);
         return 1;
+    } finally {
+        engine::log_shutdown();
     }
 }

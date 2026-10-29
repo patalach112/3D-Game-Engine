@@ -1,4 +1,5 @@
 #include "editor_app.hpp"
+#include "engine/log.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -53,6 +54,7 @@ bool hit_gizmo(int sx, int sy, int view_w, int view_h, engine::Entity& entity) {
 
 void add_primitive(engine::PrimitiveType type) {
     App& g = app();
+    LOG_DEBUG("editor", "Adding primitive type " + std::to_string(static_cast<int>(type)));
     const char* name = "Cube";
     switch (type) {
     case engine::PrimitiveType::Sphere: name = "Sphere"; break;
@@ -66,6 +68,7 @@ void add_primitive(engine::PrimitiveType type) {
     if (type == engine::PrimitiveType::Plane) entity.transform.scale = {3.0F, 0.05F, 3.0F};
     g.selected = entity.id;
     g.status = L"Dodano obiekt";
+    LOG_DEBUG("editor", "Added " + entity.name);
 }
 
 } // namespace editor
