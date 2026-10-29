@@ -16,7 +16,10 @@ void render_frame(HWND hwnd) {
             update_layout();
             const auto now=std::chrono::steady_clock::now();
             static auto previous=now;
-            const float delta=std::clamp(std::chrono::duration<float>(now-previous).count(),0.001F,0.1F);
+            const float elapsed=std::chrono::duration<float>(now-previous).count();
+            // ImGui averages FPS over recent frames. Use real elapsed time:
+            // capping it at 0.1 s would incorrectly report at least 10 FPS.
+            const float delta=elapsed>0.0F?elapsed:1.0F/60.0F;
             previous=now;
             g.renderer.begin_ui_frame(delta);
             draw_ui();
