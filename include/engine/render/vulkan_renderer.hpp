@@ -73,6 +73,8 @@ public:
     [[nodiscard]] Vec3 clear_color() const noexcept { return clear_color_; }
     void set_grid_visible(bool visible) noexcept { grid_visible_ = visible; }
     [[nodiscard]] bool grid_visible() const noexcept { return grid_visible_; }
+    // 0 = translation arrows, 1 = rotation rings, 2 = scale handles.
+    void set_gizmo_mode(int mode) noexcept { gizmo_mode_ = mode >= 0 && mode <= 2 ? mode : 0; }
     void initialize();
     void shutdown() noexcept;
     void resize(int width, int height);
@@ -102,6 +104,7 @@ private:
     int height_{1};
     Vec3 clear_color_{39.0F / 255.0F, 39.0F / 255.0F, 41.0F / 255.0F};
     bool grid_visible_{true};
+    int gizmo_mode_{};
     std::vector<std::uint32_t> pixels_;
 };
 

@@ -59,6 +59,7 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
         engine::WindowConfig config;
         config.title="Starter 3D | Vulkan Studio";
         config.width=1440; config.height=900; config.visible=false;
+        config.borderless=true;
         config.native_callback=[](const engine::NativeMessage& msg,std::intptr_t& result,void*) {
             result=editor::window_proc(static_cast<HWND>(msg.window),msg.id,
                 static_cast<WPARAM>(msg.wparam),static_cast<LPARAM>(msg.lparam));
@@ -66,9 +67,16 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
         };
         main_window=engine::createnewwindow(config);
         hwnd=reinterpret_cast<HWND>(main_window->native_handle().window);
+        state.hwnd=hwnd;
         state.renderer.set_window(main_window->native_handle().instance,hwnd);
         state.renderer.initialize();
         state.renderer.enable_ui();
+        auto& io=ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+        io.ConfigWindowsMoveFromTitleBarOnly=true;
+        io.IniFilename="editor_layout.ini";
+        // One Vulkan target and one context: do not enable platform viewports.
+        LOG_INFO("editor", "Vulkan Studio: docking, console and custom title bar ready");
         state.renderer.set_external_mouse_capture(true);
         auto wake=[hwnd] { PostMessageW(hwnd,editor::kWorkerWake,0,0); };
         state.inputs=std::make_unique<engine::InputProcessor>(wake);

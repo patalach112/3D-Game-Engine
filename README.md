@@ -30,8 +30,9 @@ w konfiguracji Debug, jeśli są zainstalowane. Ich brak nie blokuje startu.
 ### Windows
 
 Cały **obszar klienta** głównego okna ma jedną powierzchnię `VkSurfaceKHR` i swapchain.
-Nie ma już osobnego HWND dla widoku 3D ani warstwy paneli GDI. Ramkę systemową,
-pasek tytułu i natywne okno IME nadal obsługuje Windows/DWM.
+Nie ma osobnego HWND dla widoku 3D ani warstwy paneli GDI. Edytor ma własny
+pasek tytułu i menu Vulkan; przeciąganie, resize, minimalizacja i maksymalizacja
+korzystają z natywnych komunikatów Windows. Natywne okno IME obsługuje Windows.
 
 ```text
 Scene → geometria → viewport + scissor 3D → kolor/depth MSAA
@@ -43,9 +44,9 @@ UI + font atlas → trójkąty + alpha blending w tym samym render passie
 `BeginPaint`/`EndPaint` wyłącznie zatwierdzają obszar uszkodzenia Win32.
 Zmiana rozmiaru okna odtwarza zasoby; zmiana podziału paneli zmienia viewport,
 bez tworzenia okien potomnych. Minimalizacja zatrzymuje rysowanie, a błędy
-`OUT_OF_DATE`/`SUBOPTIMAL` odtwarzają swapchain. UI odświeża się co około 16 ms
-(timer Win32), aby działały hover, kursor tekstowy i przeciąganie również bez
-zmian sceny. To nie jest gwarancja 60 FPS.
+`OUT_OF_DATE`/`SUBOPTIMAL` odtwarzają swapchain. UI odświeża się stale, domyślnie bez limitu FPS; opcjonalny limit jest dostępny
+w ustawieniach grafiki. Pętla komunikatów pozostaje responsywna podczas pracy
+wątku Vulkan.
 
 Backend współdzieli jeden zestaw zasobów klatki, chroniony fence przed ponownym
 użyciem. Semafory prezentacji są osobne na obraz swapchaina. Nie blokuje CPU po
@@ -62,6 +63,17 @@ skonfigurować z `-DENGINE_LINUX_X11=OFF` (wtedy nie wymaga nagłówków X11).
 Można użyć sprzętowego ICD albo programowego ICD (np. Mesa lavapipe / SwiftShader)
 w CI. Programowy ICD nadal wykonuje polecenia Vulkan; projekt nie ma fallbacku
 na poprzedni rasteryzator CPU. `pixels()` nie jest zapełniane w trybie swapchaina.
+
+## Panele, menu i konsola
+
+Edytor Windows używa Dear ImGui **1.91.9b-docking**, renderowanego przez Vulkan.
+Panele można dokować, odpinać, skalować i łączyć w zakładki wewnątrz głównego
+okna; układ zapisuje się w `editor_layout.ini`. Konsola na dole ma poziomy
+DEBUG/INFO/WARN/ERROR, filtr, kopiowanie, czyszczenie i komendy (`help`).
+Menu **Plik** zawiera nieaktywne Import/Eksport oraz Ustawienia, **Narzędzia**
+przełącza ruch/obrót/skalę gizma, a **Dodaj** ma podmenu otwierane po najechaniu:
+**Obiekty** (cztery dotychczasowe typy) oraz **Płaszczyzna** (koło 2D i kwadrat 2D).
+Szczegóły i lista testów: [docs/editor_ui.md](docs/editor_ui.md).
 
 ## Budowanie
 
