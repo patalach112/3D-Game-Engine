@@ -43,13 +43,12 @@ engine::Vec3 normalized(engine::Vec3 a) {
 
 void update_camera() {
     App& g = app();
-    LOG_DEBUG("camera", "Yaw=%.2f Pitch=%.2f Dist=%.2f", g.yaw, g.pitch, g.camera_distance);
     const auto& target = g.camera.target;
-    const float cp = std::cos(g.pitch);
-    g.camera.position = {
-        target.x + g.camera_distance * cp * std::sin(g.yaw),
-        target.y + g.camera_distance * std::sin(g.pitch),
-        target.z + g.camera_distance * cp * std::cos(g.yaw)
+    const float cp = std::cos(g.orbit.pitch);
+    g.camera.position = engine::Vec3{
+        target.x + g.orbit.distance * cp * std::sin(g.orbit.yaw),
+        target.y + g.orbit.distance * std::sin(g.orbit.pitch),
+        target.z + g.orbit.distance * cp * std::cos(g.orbit.yaw)
     };
 }
 

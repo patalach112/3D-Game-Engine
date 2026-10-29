@@ -1257,7 +1257,7 @@ void VulkanRenderer::initialize() {
     try {
         LOG_DEBUG("renderer", "Initializing Vulkan instance");
         impl_->init();
-        LOG_DEBUG("renderer", "Vulkan initialized on device: " + impl_->name);
+        LOG_DEBUG("renderer", "Vulkan initialized on device: %s", impl_->name.c_str());
     }
     catch (...) { shutdown(); throw; }
 }
