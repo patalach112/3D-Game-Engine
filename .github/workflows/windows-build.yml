@@ -36,7 +36,7 @@ jobs:
         run: cmake --build build --parallel 2
       - name: Test platform, geometry and editor state (no GPU required)
         run: |
-          ctest --test-dir build -R '^(platform_tests|geometry_tests|editor_state_tests|input_tests|render_worker_tests|camera_smoothing_tests)$' --output-on-failure --no-tests=error
+          ctest --test-dir build -R '^(platform_tests|geometry_tests|editor_state_tests|input_tests|render_worker_tests|camera_smoothing_tests|log_tests|docking_tests)$' --output-on-failure --no-tests=error
           ./build/platform_tests.exe --window
       - name: Check EXE and engine DLL imports (no GPU required)
         run: ctest --test-dir build -R '^engine_runtime_dependencies$' --output-on-failure --no-tests=error

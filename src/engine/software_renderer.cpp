@@ -25,6 +25,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
 #endif
 
 #include "engine/log.hpp"
+#include "engine/gizmo.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -90,6 +91,22 @@ MeshData make_primitive_mesh(PrimitiveType type) {
         mesh.vertices={{-0.5F,0,-0.5F},{0.5F,0,-0.5F},{0.5F,0,0.5F},{-0.5F,0,0.5F}};
         mesh.triangles={{{0,1,2}},{{0,2,3}}};
         mesh.edges={{{0,1}},{{1,2}},{{2,3}},{{3,0}}};
+    } else if(type==PrimitiveType::Square2D) {
+        mesh.vertices={{-0.5F,-0.5F,0},{0.5F,-0.5F,0},{0.5F,0.5F,0},{-0.5F,0.5F,0}};
+        mesh.triangles={{{0,1,2}},{{0,2,3}}};
+        mesh.edges={{{0,1}},{{1,2}},{{2,3}},{{3,0}}};
+    } else if(type==PrimitiveType::Circle2D) {
+        constexpr int segments=64;
+        mesh.vertices.push_back({0,0,0});
+        for(int i=0;i<segments;++i) {
+            const float a=2*kPi*static_cast<float>(i)/segments;
+            mesh.vertices.push_back({0.5F*std::cos(a),0.5F*std::sin(a),0});
+        }
+        for(int i=0;i<segments;++i) {
+            const int a=i+1,b=(i+1)%segments+1;
+            mesh.triangles.push_back({0,a,b});
+            mesh.edges.push_back({a,b});
+        }
     } else if(type==PrimitiveType::Cylinder) {
         constexpr int segments=20;
         for(int ring=0;ring<2;++ring) for(int i=0;i<segments;++i) {
@@ -150,11 +167,13 @@ MeshData make_primitive_mesh(PrimitiveType type) {
 // Generuje mesh raz na typ primitywny i wykorzystuje go w każdym kadrze.
 // Bez cache po każdym obiekcie tworzone były trzy std::vector na frame.
 const MeshData& primitive_mesh(PrimitiveType type) {
-    static const std::array<MeshData, 4> cache{
+    static const std::array<MeshData, 6> cache{
         make_primitive_mesh(PrimitiveType::Cube),
         make_primitive_mesh(PrimitiveType::Sphere),
         make_primitive_mesh(PrimitiveType::Cylinder),
         make_primitive_mesh(PrimitiveType::Plane),
+        make_primitive_mesh(PrimitiveType::Circle2D),
+        make_primitive_mesh(PrimitiveType::Square2D),
     };
     const auto index=static_cast<std::size_t>(type);
     if (index>=cache.size()) throw std::invalid_argument("Invalid primitive type");
@@ -214,9 +233,12 @@ template<class T> bool named(const std::vector<T>& entries, const char* name) {
             return std::strcmp(entry.layerName, name) == 0;
     });
 }
-VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT,
+VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     VkDebugUtilsMessageTypeFlagsEXT, const VkDebugUtilsMessengerCallbackDataEXT* message, void*) {
-    std::cerr << "Vulkan validation: " << message->pMessage << '\n';
+    try {
+        log_write((severity&VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)?LogLevel::Error:LogLevel::Warn,
+            "vulkan",message->pMessage);
+    } catch (...) {} // Never unwind through the driver's C callback.
     return VK_FALSE;
 }
 struct FrameGeometry {
@@ -225,7 +247,7 @@ struct FrameGeometry {
     std::uint32_t lines{}, overlay_lines{}, overlay_triangles{};
 };
 FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, EntityId selected,
-                             int width, int height, bool grid_visible) {
+                             int width, int height, bool grid_visible, int gizmo_mode) {
     std::vector<DebugVertex> lines, overlay_lines, overlay_triangles;
     const auto line = [](std::vector<DebugVertex>& out, Vec3 a, Vec3 b, Vec3 color, float grid = 0.0F) {
         out.push_back({a, color, grid}); out.push_back({b, color, grid});
@@ -254,8 +276,8 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
     }
 
     GeometryBuilder builder;
-    std::array<MeshId,4> cached{};
-    std::array<bool,4> has_mesh{};
+    std::array<MeshId,6> cached{};
+    std::array<bool,6> has_mesh{};
     for (const auto& entity:scene.entities()) {
         const auto& t=entity.transform;
         if (!finite(t.position)||!finite(t.rotation)||!finite(t.scale)) continue;
@@ -322,25 +344,41 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
     }
     if (const Entity* entity=scene.find_entity(selected)) {
         const Vec3 center=entity->transform.position;
-        const float distance=length(subtract(camera.position,center));
-        const float handle_length=std::clamp(distance*0.13F,0.8F,2.0F);
+        const float handle_length=gizmo_length(camera.position,center);
         const float pixel_radius=static_cast<float>(std::clamp(static_cast<int>(std::lround(height*0.011F)),7,12));
-        for (int axis=0;axis<3;++axis) for (float sign : {-1.0F,1.0F}) {
-            const Vec3 dir=axis==0?Vec3{1,0,0}:axis==1?Vec3{0,1,0}:Vec3{0,0,1};
-            const Vec3 handle=add(center,multiply(dir,sign*handle_length));
+        if (gizmo_mode==1) {
+            for (int axis=0;axis<3;++axis) for (int i=0;i<64;++i)
+                line(overlay_lines,gizmo_ring_point(center,axis,handle_length,2*kPi*i/64),
+                    gizmo_ring_point(center,axis,handle_length,2*kPi*(i+1)/64),rgb(kAxisColors[axis]));
+        } else for (int axis=0;axis<3;++axis) for (float sign : {-1.0F,1.0F}) {
+            const Vec3 dir=multiply(gizmo_axis(axis),sign);
+            const Vec3 handle=add(center,multiply(dir,handle_length));
             const float depth=to_camera(handle,camera,basis).z;
             if (depth<kNearPlane) continue;
             const Vec3 color=rgb(kAxisColors[axis]);
             line(overlay_lines,center,handle,color);
             const float radius=pixel_radius*2.0F*depth*v_tan/static_cast<float>(height);
-            for (int i=0;i<24;++i) {
-                const auto rim=[&](int index) {
-                    const float a=2*kPi*static_cast<float>(index)/24.0F;
-                    return add(handle,add(multiply(basis.right,std::cos(a)*radius),multiply(basis.up,std::sin(a)*radius)));
+            const auto triangle=[&](Vec3 a,Vec3 b,Vec3 c) {
+                for (auto p:{a,b,c}) overlay_triangles.push_back({p,color});
+            };
+            if (gizmo_mode==2) {
+                std::array<Vec3,8> corners;
+                for (int i=0;i<8;++i) corners[i]=add(handle,
+                    {(i&1)?radius:-radius,(i&2)?radius:-radius,(i&4)?radius:-radius});
+                constexpr int faces[6][4]{{0,1,3,2},{4,6,7,5},{0,4,5,1},{2,3,7,6},{0,2,6,4},{1,5,7,3}};
+                for (const auto& f:faces) {
+                    triangle(corners[f[0]],corners[f[1]],corners[f[2]]);
+                    triangle(corners[f[0]],corners[f[2]],corners[f[3]]);
+                }
+            } else {
+                const Vec3 u=gizmo_axis((axis+1)%3),v=cross(dir,u);
+                const Vec3 tip=add(handle,multiply(dir,radius*1.6F));
+                const Vec3 base=subtract(handle,multiply(dir,radius*2));
+                const auto rim=[&](int i) {
+                    const float angle=2*kPi*i/16;
+                    return add(base,add(multiply(u,std::cos(angle)*radius),multiply(v,std::sin(angle)*radius)));
                 };
-                overlay_triangles.push_back({handle,color});
-                overlay_triangles.push_back({rim(i),color});
-                overlay_triangles.push_back({rim(i+1),color});
+                for (int i=0;i<16;++i) { triangle(tip,rim(i),rim(i+1)); triangle(base,rim(i+1),rim(i)); }
             }
         }
     }
@@ -1412,7 +1450,7 @@ void VulkanRenderer::render(const Scene& scene, const EditorCamera& camera, Enti
         if (impl_->ui_frame_open) finish_ui_frame();
         if (impl_->ui_frame_ready) ImGui::SetCurrentContext(impl_->ui);
         impl_->ui_frame_ready=false;
-        const auto frame=scene_geometry(scene,camera,selected,viewport.width,viewport.height,grid_visible_);
+        const auto frame=scene_geometry(scene,camera,selected,viewport.width,viewport.height,grid_visible_,gizmo_mode_);
         impl_->draw(frame,camera,width_,height_,pixels_,viewport,draw_ui,clear_color_);
     } catch (...) { shutdown(); throw; }
 }

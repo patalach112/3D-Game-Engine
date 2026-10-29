@@ -13,6 +13,7 @@
 #include "engine/input.hpp"
 #include "engine/render/render_worker.hpp"
 #include <chrono>
+#include <deque>
 #include <string>
 
 namespace editor {
@@ -33,6 +34,21 @@ struct App {
     std::unique_ptr<engine::InputProcessor> inputs;
     std::unique_ptr<engine::RenderWorker> render_worker;
     bool close_requested{}, minimized{};
+    HWND hwnd{};
+    RECT title_drag_bounds{};
+    bool menu_open{}, docking_initialized{}, viewport_visible{}, scene_floating{};
+    ImDrawList* scene_drawlist{};
+    bool reset_layout{}, show_hierarchy{true}, show_inspector{true}, show_scene{true};
+    bool show_console{true}, show_resources{true}, show_notes{true}, show_renderer{true};
+    bool show_settings{}, focus_settings{};
+    ImGuiTextFilter console_filter;
+    bool console_levels[4]{true,true,true,true};
+    bool console_auto_scroll{true};
+    std::uint64_t console_clear_sequence{}, console_seen_sequence{};
+    struct ConsoleRow { std::string text; int level{}; };
+    std::deque<ConsoleRow> console_rows;
+    std::uint64_t console_loaded_sequence{};
+    char console_command[256]{};
     unsigned native_buttons{};
 
     // 0 means unlimited. The deadline is managed by the message-loop frame pacer.
@@ -80,6 +96,7 @@ void update_camera();
 void update_layout();
 RECT view_rect();
 void draw_ui();
+bool scene_input_at(int x,int y);
 void render_frame(HWND hwnd);
 void reset_frame_timing();
 void apply_input_event(HWND hwnd,const engine::InputEvent& event);

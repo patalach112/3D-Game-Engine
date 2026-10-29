@@ -16,7 +16,9 @@ enum class PrimitiveType : std::uint8_t {
     Cube,
     Sphere,
     Cylinder,
-    Plane
+    Plane,
+    Circle2D, // Flat XY disk. Append values to preserve existing scene IDs.
+    Square2D, // Flat XY square.
 };
 
 struct Transform {
