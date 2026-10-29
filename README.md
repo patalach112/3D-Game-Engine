@@ -43,10 +43,11 @@ renderowanie/prezentację, a `VK_ERROR_OUT_OF_DATE_KHR` i `VK_SUBOPTIMAL_KHR`
 powodują odtworzenie swapchaina. Zasoby są zwalniane po zakończeniu pracy GPU.
 
 Edytor jest odświeżany zdarzeniowo: rasteryzacja tylko po zmianie sceny, kamery,
-zaznaczenia lub rozmiaru; przy samym odmalowaniu UI prezentuje gotowy obraz.
-Na razie jest **jedna klatka w locie**, z fence i semaforami prezentacji osobnymi
-na obraz swapchaina. To prosty, zsynchronizowany backend edytora, nie jeszcze
-wieloklatkowy renderer do gry o wysokiej przepustowości.
+zaznaczenia lub rozmiaru. Odsłonięcie widoku prezentuje zapisany obraz, a zmiana
+samego UI nie wymusza prezentacji GPU.
+Backend współdzieli jeden zestaw zasobów klatki, chroniony fence przed ponownym
+użyciem. Semafory prezentacji są osobne na obraz swapchaina. Nie blokuje CPU po
+każdej prezentacji, ale nie jest jeszcze wieloklatkowym rendererem gry.
 
 ### Linux / headless
 
@@ -119,3 +120,42 @@ Asercje pozostają aktywne również w konfiguracji Release.
 
 Tekstury, bindless, compute culling, fizyka, eksport gry i programowanie wizualne
 nie są jeszcze zaimplementowane.
+
+## Przekazanie EXE innemu użytkownikowi (MinGW)
+
+Domyślnie `ENGINE_STATIC_MINGW_RUNTIME=ON`: GCC, libstdc++ oraz potrzebny runtime
+wątków są linkowane statycznie. Po **ponownym zbudowaniu** nie trzeba przekazywać
+`libgcc_s_seh-1.dll`, `libstdc++-6.dll` ani `libwinpthread-1.dll`.
+Nie pobieraj tych DLL-i z przypadkowych stron internetowych.
+
+```powershell
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DENGINE_STATIC_MINGW_RUNTIME=ON
+cmake --build build --config Release
+ctest --test-dir build -C Release -R engine_runtime_dependencies --output-on-failure
+cmake --build build --config Release --target package
+```
+
+Koledze przekaż nowo utworzone archiwum `build\Starter3DEngine-*.zip`, a nie EXE
+ze starego buildu. W ZIP-ie jest program i instrukcja; shadery są wbudowane.
+Test importów PE oraz pakowanie ZIP-a wykonuje też workflow Windows MinGW.
+Opcja dotyczy MinGW, nie toolchaina MSVC. Można ją wyłączyć przez `OFF`, ale wtedy
+trzeba samodzielnie dostarczyć zgodne biblioteki runtime kompilatora.
+
+Na komputerze odbiorcy **nadal wymagany jest sterownik GPU z obsługą Vulkan 1.1+**
+(w tym `vulkan-1.dll`). Nie jest potrzebny Vulkan SDK. Nie pakujemy sterownika
+z komputera dewelopera do archiwum.
+
+### Płynność viewportu
+
+Na Windowsie zapis sceny i blit do swapchaina są teraz częścią **jednego zgłoszenia
+GPU**. Nie ma czekania na fence pomiędzy rasteryzacją a blitem ani
+`vkQueueWaitIdle` po każdej prezentacji. Fence przed kolejnym użyciem zasobów
+pozostaje — chroni bufor wierzchołków, command buffer i współdzielony depth buffer.
+Headless nadal czeka na zakończenie odczytu pikseli. Pełne oczekiwanie na urządzenie
+jest zachowane przy zmianie zasobów/rozmiaru i zamykaniu aplikacji.
+
+Jeśli sterownik obsługuje MAILBOX, renderer wybiera go dla prezentacji bez tearingu
+z mniejszą kolejką starych klatek; w przeciwnym razie używa FIFO. Edycja samego UI
+nie prezentuje ponownie niezmienionego viewportu. Odsłonięcie/przywrócenie okna
+wciąż wymusza prezentację. Nie jest to gwarancja konkretnego FPS — pomiar na
+rzeczywistym GPU jest nadal potrzebny, szczególnie dla dużych scen.

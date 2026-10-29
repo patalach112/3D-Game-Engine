@@ -49,6 +49,8 @@ public:
     void initialize();
     void shutdown() noexcept;
     void resize(int width, int height);
+    // Win32: records a scene pass; present() submits it together with the blit.
+    // Headless: submits and waits for pixel readback before returning.
     void render(const Scene& scene, const EditorCamera& camera, EntityId selected);
     void present();
 
