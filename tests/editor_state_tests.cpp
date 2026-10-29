@@ -32,6 +32,7 @@ void check_layout() {
 
 int main() {
     auto& g = editor::app();
+    assert(g.fps_limit == 0); // threaded editor starts uncapped
     // The frame limiter uses deadlines, supports arbitrary limits and treats 0 as
     // genuinely uncapped rather than silently falling back to a 16 ms timer.
     const auto start = editor::FrameClock::time_point(std::chrono::seconds(1));

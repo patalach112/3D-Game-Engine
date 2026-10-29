@@ -392,7 +392,7 @@ struct VulkanRenderer::Impl {
     VkFormat depth_format{};
     VkSampleCountFlagBits samples{VK_SAMPLE_COUNT_1_BIT};
     ImGuiContext* ui{};
-    bool ui_platform{}, ui_frame_open{};
+    bool ui_platform{}, ui_frame_open{}, ui_frame_ready{};
     struct Image { VkImage handle{}; VkDeviceMemory memory{}; VkImageView view{}; } color, depth, msaa;
     struct Buffer { VkBuffer handle{}; VkDeviceMemory memory{}; VkDeviceSize capacity{}; void* mapped{}; } vertices, readback, geometry, object_data, indirect, ui_uv;
     VkFramebuffer framebuffer{};
@@ -1145,6 +1145,10 @@ void VulkanRenderer::Impl::create_swapchain() {
     check(vkGetPhysicalDeviceSurfacePresentModesKHR(physical,surface,&mode_count,modes.data()),"Query presentation modes");
     if (std::find(modes.begin(),modes.end(),VK_PRESENT_MODE_MAILBOX_KHR)!=modes.end())
         info.presentMode=VK_PRESENT_MODE_MAILBOX_KHR;
+    // No software limiter / vsync request: IMMEDIATE first (tearing possible).
+    // Some surfaces/drivers expose only MAILBOX/FIFO; respect their capabilities.
+    if (std::find(modes.begin(),modes.end(),VK_PRESENT_MODE_IMMEDIATE_KHR)!=modes.end())
+        info.presentMode=VK_PRESENT_MODE_IMMEDIATE_KHR;
     info.clipped=VK_TRUE;
     check(vkCreateSwapchainKHR(device,&info,nullptr,&swapchain),"Create Vulkan swapchain");
     swap_extent=extent; swap_format=chosen->format;
@@ -1257,6 +1261,7 @@ VulkanRenderer::VulkanRenderer() : impl_(std::make_unique<Impl>()) {}
 VulkanRenderer::~VulkanRenderer() = default;
 void VulkanRenderer::initialize() {
     if (!impl_) impl_=std::make_unique<Impl>();
+    if (impl_->device) return;
     try {
         LOG_DEBUG("renderer", "Initializing Vulkan instance");
         impl_->init();
@@ -1342,7 +1347,7 @@ void VulkanRenderer::begin_ui_frame(float delta_seconds) {
     if (!std::isfinite(delta_seconds) || delta_seconds<=0)
         throw std::invalid_argument("UI delta time must be positive and finite");
     if (!impl_ || !impl_->ui) throw std::logic_error("Call enable_ui before begin_ui_frame");
-    if (impl_->ui_frame_open) throw std::logic_error("Finish the UI frame with render before beginning another");
+    if (impl_->ui_frame_open || impl_->ui_frame_ready) throw std::logic_error("Render the previous UI frame before beginning another");
     ImGui::SetCurrentContext(impl_->ui);
     ImGui_ImplVulkan_NewFrame();
 #ifdef _WIN32
@@ -1354,7 +1359,19 @@ void VulkanRenderer::begin_ui_frame(float delta_seconds) {
     ImGui::NewFrame();
     impl_->ui_frame_open=true;
 }
+void VulkanRenderer::finish_ui_frame() {
+    if (!impl_ || !impl_->ui_frame_open) throw std::logic_error("No UI frame to finish");
+    ImGui::SetCurrentContext(impl_->ui);
+    ImGui::Render();
+    impl_->ui_frame_open=false;
+    impl_->ui_frame_ready=true;
+}
 #ifdef _WIN32
+void VulkanRenderer::set_external_mouse_capture(bool enabled) {
+    if (!impl_ || !impl_->ui_platform) throw std::logic_error("Enable Win32 UI first");
+    ImGui::SetCurrentContext(impl_->ui);
+    ImGui_ImplWin32_SetExternalMouseCapture(enabled);
+}
 bool VulkanRenderer::handle_ui_message(void* window, unsigned int message,
                                       std::uintptr_t wparam, std::intptr_t lparam) {
     if (!impl_ || !impl_->ui || !impl_->ui_platform) return false;
@@ -1391,13 +1408,10 @@ void VulkanRenderer::render(const Scene& scene, const EditorCamera& camera, Enti
         throw std::invalid_argument("Scene viewport must fit inside the render target");
     initialize();
     try {
-        const bool draw_ui=impl_->ui_frame_open;
-        if (!draw_ui) LOG_DEBUG("renderer", "Rendering frame");
-        if (draw_ui) {
-            ImGui::SetCurrentContext(impl_->ui);
-            ImGui::Render();
-            impl_->ui_frame_open=false;
-        }
+        const bool draw_ui=impl_->ui_frame_open || impl_->ui_frame_ready;
+        if (impl_->ui_frame_open) finish_ui_frame();
+        if (impl_->ui_frame_ready) ImGui::SetCurrentContext(impl_->ui);
+        impl_->ui_frame_ready=false;
         const auto frame=scene_geometry(scene,camera,selected,viewport.width,viewport.height,grid_visible_);
         impl_->draw(frame,camera,width_,height_,pixels_,viewport,draw_ui,clear_color_);
     } catch (...) { shutdown(); throw; }
@@ -1411,8 +1425,10 @@ void VulkanRenderer::render_geometry(const GeometryBuffer& geometry,const Editor
         ||viewport.x>width_-viewport.width||viewport.y>height_-viewport.height) throw std::invalid_argument("Invalid scene viewport");
     initialize();
     try {
-        const bool ui=impl_->ui_frame_open;
-        if (ui) { ImGui::SetCurrentContext(impl_->ui); ImGui::Render(); impl_->ui_frame_open=false; }
+        const bool ui=impl_->ui_frame_open || impl_->ui_frame_ready;
+        if (impl_->ui_frame_open) finish_ui_frame();
+        if (impl_->ui_frame_ready) ImGui::SetCurrentContext(impl_->ui);
+        impl_->ui_frame_ready=false;
         FrameGeometry frame; frame.geometry=geometry;
         impl_->draw(frame,camera,width_,height_,pixels_,viewport,ui,clear_color_);
     } catch (...) { shutdown(); throw; }

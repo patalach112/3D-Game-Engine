@@ -71,13 +71,8 @@ engine::Vec3 normalized(engine::Vec3 a) {
 
 void update_camera() {
     App& g = app();
-    const auto& target = g.camera.target;
-    const float cp = std::cos(g.orbit.pitch);
-    g.camera.position = engine::Vec3{
-        target.x + g.orbit.distance * cp * std::sin(g.orbit.yaw),
-        target.y + g.orbit.distance * std::sin(g.orbit.pitch),
-        target.z + g.orbit.distance * cp * std::cos(g.orbit.yaw)
-    };
+    engine::apply_orbit(g.camera,g.orbit);
+    g.displayed_orbit=g.orbit;
 }
 
 void update_layout() {

@@ -103,11 +103,11 @@ int run_editor() {
             auto& cube = scene.create_entity("Cube " + std::to_string(scene.entity_count()));
             cube.transform.position = {static_cast<float>(scene.entity_count() - 1) * 1.2F, 0.5F, 0.0F};
             selected = cube.id;
-            LOG_DEBUG("linux", "Added cube, total entities: " + std::to_string(scene.entity_count()));
+            LOG_DEBUG("linux", "Added cube, total entities: %zu", scene.entity_count());
         } else if (command == "select") {
             engine::EntityId id{};
             if (!(input >> id) || !scene.find_entity(id)) std::cout << "Nie ma obiektu o takim ID.\n";
-            else { selected = id; LOG_DEBUG("linux", "Selected entity " + std::to_string(id)); }
+            else { selected = id; LOG_DEBUG("linux", "Selected entity %llu", static_cast<unsigned long long>(id)); }
         } else if (command == "move") {
             engine::Vec3 position{};
             if (input >> position.x >> position.y >> position.z) {

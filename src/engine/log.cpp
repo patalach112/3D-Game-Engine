@@ -94,9 +94,8 @@ void log_shutdown() {
 }
 
 void log_write(LogLevel level, const char* tag, const std::string& message) {
-    if (!should_log(level)) return;
-
     std::lock_guard<std::mutex> lock(g_log_mutex);
+    if (!should_log(level)) return;
 
     const std::string ts = timestamp_string();
     const char* lvl = level_name(level);
