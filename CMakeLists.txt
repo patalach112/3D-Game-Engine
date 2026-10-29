@@ -207,7 +207,8 @@ if(BUILD_TESTING)
     if(WIN32)
         # Exercise editor state without a window or Vulkan device. Building this
         # target also catches header/implementation drift in app.cpp.
-        add_executable(editor_state_tests tests/editor_state_tests.cpp src/editor/app.cpp src/editor/interaction.cpp src/editor/gizmo.cpp src/editor/ui.cpp src/editor/scene_io.cpp)
+        add_executable(editor_state_tests tests/editor_state_tests.cpp src/editor/app.cpp
+            src/editor/interaction.cpp src/editor/gizmo.cpp src/editor/ui.cpp src/editor/scene_io.cpp)
         target_include_directories(editor_state_tests PRIVATE src/editor)
         target_link_libraries(editor_state_tests PRIVATE engine_core user32)
         target_compile_definitions(editor_state_tests PRIVATE UNICODE _UNICODE)

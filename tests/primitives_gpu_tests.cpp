@@ -83,6 +83,11 @@ int main() {
             ImGui::Begin(title,nullptr,ImGuiWindowFlags_NoFocusOnAppearing);
             ImGui::TextUnformatted("Behind scene"); ImGui::End();
         }
+        ImGui::SetNextWindowPos({static_cast<float>(view.x+15),static_cast<float>(view.y+15)});
+        ImGui::SetNextWindowSize({80,80}); ImGui::SetNextWindowFocus();
+        ImGui::PushStyleColor(ImGuiCol_WindowBg,{1,0,0,1});
+        ImGui::Begin("Foreground",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoDocking);
+        ImGui::End(); ImGui::PopStyleColor();
         renderer.finish_ui_frame();
         editor::layout::cutout_behind_scene(ImGui::GetDrawData(),list,
             {static_cast<float>(view.x),static_cast<float>(view.y),
@@ -91,6 +96,8 @@ int main() {
     }
     const auto floated_center=static_cast<std::size_t>(view.y+view.height/2)*800+view.x+view.width/2;
     const auto floated=renderer.pixels().at(floated_center);
+    const auto foreground=static_cast<std::size_t>(view.y+35)*800+view.x+35;
+    assert(renderer.pixels().at(foreground)==0x00FF0000U); // Above-scene UI is not cut out.
     renderer.render(scene,camera,0,view);
     assert(floated==renderer.pixels().at(floated_center) && floated!=background);
 }
