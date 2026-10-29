@@ -284,8 +284,8 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
     }
     // Ground grid bounds follow the frustum, rather than a fixed little patch.
     const Basis basis=camera_basis(camera);
+    const float v_tan=std::tan(camera.vertical_fov_degrees*kPi/360.0F);
     if (grid_visible) {
-        const float v_tan=std::tan(camera.vertical_fov_degrees*kPi/360.0F);
         const float h_tan=v_tan*static_cast<float>(width)/static_cast<float>(height);
         float gx0=camera.position.x-10, gx1=camera.position.x+10;
         float gz0=camera.position.z-10, gz1=camera.position.z+10;
