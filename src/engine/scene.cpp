@@ -1,4 +1,5 @@
 #include "engine/scene/scene.hpp"
+#include "engine/log.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -12,6 +13,7 @@ Entity& Scene::create_entity(std::string name, PrimitiveType primitive) {
     }
 
     entities_.push_back(Entity{next_id_++, std::move(name), primitive, {}});
+    LOG_DEBUG("scene", "Created entity: " + entities_.back().name);
     return entities_.back();
 }
 
@@ -34,6 +36,7 @@ bool Scene::remove_entity(EntityId id) {
         return false;
     }
     entities_.erase(found);
+    LOG_DEBUG("scene", "Removed entity ID " + std::to_string(id));
     return true;
 }
 

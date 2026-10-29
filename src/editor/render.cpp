@@ -1,4 +1,5 @@
 #include "editor_app.hpp"
+#include "engine/log.hpp"
 #include <algorithm>
 #include <exception>
 #include <chrono>
@@ -22,6 +23,7 @@ void render_frame(HWND hwnd) {
             const float delta=elapsed>0.0F?elapsed:1.0F/60.0F;
             previous=now;
             g.renderer.begin_ui_frame(delta);
+            LOG_DEBUG("render", "Rendering frame at %dx%d", g.width, g.height);
             draw_ui();
             const auto view=view_rect();
             const auto& io=ImGui::GetIO();

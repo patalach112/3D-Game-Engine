@@ -1,4 +1,5 @@
 #include "engine/render/vulkan_renderer.hpp"
+#include "engine/log.hpp"
 
 #include <algorithm>
 #include <array>
@@ -76,6 +77,8 @@ void print_help() {
 } // namespace
 
 int run_editor() {
+    engine::log_init(nullptr);
+    LOG_INFO("linux", "Starter 3D Editor start (Linux)");
     engine::Scene scene;
     auto& first_cube = scene.create_entity("Cube 0");
     first_cube.transform.position = {0.0F, 0.5F, 0.0F};
@@ -83,6 +86,9 @@ int run_editor() {
     engine::EditorCamera camera{{5.0F, 4.0F, 7.0F}, {0.0F, 0.5F, 0.0F}, 45.0F};
     engine::VulkanRenderer renderer;
 
+    LOG_INFO("linux", "Initializing Vulkan renderer");
+    renderer.initialize();
+    LOG_INFO("linux", "Vulkan renderer initialized: " + renderer.device_name());
     print_help();
     render(scene, renderer, camera, selected);
     std::string line;
@@ -97,10 +103,11 @@ int run_editor() {
             auto& cube = scene.create_entity("Cube " + std::to_string(scene.entity_count()));
             cube.transform.position = {static_cast<float>(scene.entity_count() - 1) * 1.2F, 0.5F, 0.0F};
             selected = cube.id;
+            LOG_DEBUG("linux", "Added cube, total entities: " + std::to_string(scene.entity_count()));
         } else if (command == "select") {
             engine::EntityId id{};
             if (!(input >> id) || !scene.find_entity(id)) std::cout << "Nie ma obiektu o takim ID.\n";
-            else selected = id;
+            else { selected = id; LOG_DEBUG("linux", "Selected entity " + std::to_string(id)); }
         } else if (command == "move") {
             engine::Vec3 position{};
             if (input >> position.x >> position.y >> position.z) {
@@ -120,6 +127,9 @@ int run_editor() {
         render(scene, renderer, camera, selected);
     }
     std::cout << "Do zobaczenia.\n";
+    renderer.shutdown();
+    LOG_INFO("linux", "Editor shutdown");
+    engine::log_shutdown();
     return 0;
 }
 

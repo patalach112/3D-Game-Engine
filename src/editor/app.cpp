@@ -1,4 +1,5 @@
 #include "editor_app.hpp"
+#include "engine/log.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -7,6 +8,7 @@ namespace editor {
 
 App& app() {
     static App instance;
+    LOG_DEBUG("editor", "App initialized");
     return instance;
 }
 
@@ -41,7 +43,14 @@ engine::Vec3 normalized(engine::Vec3 a) {
 
 void update_camera() {
     App& g = app();
-    engine::apply_orbit(g.camera,g.orbit);
+    LOG_DEBUG("camera", "Yaw=%.2f Pitch=%.2f Dist=%.2f", g.yaw, g.pitch, g.camera_distance);
+    const auto& target = g.camera.target;
+    const float cp = std::cos(g.pitch);
+    g.camera.position = {
+        target.x + g.camera_distance * cp * std::sin(g.yaw),
+        target.y + g.camera_distance * std::sin(g.pitch),
+        target.z + g.camera_distance * cp * std::cos(g.yaw)
+    };
 }
 
 void update_layout() {
@@ -64,6 +73,7 @@ RECT view_rect() {
 
 void duplicate_entity() {
     App& g = app();
+    LOG_DEBUG("editor", "Duplicating entity");
     auto* source = g.scene.find_entity(g.selected);
     if (!source) return;
     // create_entity may reallocate Scene's vector and invalidate source.

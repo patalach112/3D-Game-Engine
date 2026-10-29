@@ -24,6 +24,7 @@
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 #endif
 
+#include "engine/log.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -287,7 +288,7 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
     const float h_tan=v_tan*static_cast<float>(width)/static_cast<float>(height);
     float gx0=camera.position.x-10, gx1=camera.position.x+10;
     float gz0=camera.position.z-10, gz1=camera.position.z+10;
-    const float horizon=std::clamp(std::abs(camera.position.y)*300.0F,3000.0F,50000.0F);
+    const float horizon=std::max(50.0F,std::abs(camera.position.y)*100.0F);
     for (float x : {-1.0F,1.0F}) for (float y : {-1.0F,1.0F}) {
         const Vec3 dir=add(basis.forward,add(multiply(basis.right,x*h_tan),multiply(basis.up,y*v_tan)));
         const float hit_t=std::abs(dir.y)>0.0001F?-camera.position.y/dir.y:-1;
@@ -297,7 +298,13 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
         gz0=std::min(gz0,hit.z); gz1=std::max(gz1,hit.z);
     }
     const float range=std::max(gx1-gx0,gz1-gz0);
-    const float step=range>5000?500.0F:range>1500?100.0F:range>500?25.0F:range>150?5.0F:range>50?2.0F:1.0F;
+    // Nice-steps: wybierz krok z serii 1-2-5-10-20-50... aby linie miały rozmiar ~1/10 range.
+    const float raw_step=range/12.0F;
+    float magnitude=1.0F;
+    while (magnitude*2.0F<=raw_step) magnitude*=2.0F;
+    float step=magnitude;
+    while (step*5.0F<=raw_step) step*=5.0F;
+    step=std::max(step,1.0F);
     // Bounded iteration also protects against hostile/very large scene coordinates.
     for (int axis=0;axis<2;++axis) {
         const float start=std::floor((axis?gz0:gx0)/step)*step;
@@ -306,7 +313,7 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
             const float c=start+static_cast<float>(i)*step;
             if (c>end) break;
             const bool major=std::abs(std::remainder(c,5.0F*step))<0.01F;
-            const Vec3 color=rgb(major?0x0068686CU:0x0048484AU);
+            const Vec3 color=rgb(major?0x008A8A90U:0x005A5A5EU);
             if (axis) line(lines,{gx0-20,0,c},{gx1+20,0,c},color,1);
             else line(lines,{c,0,gz0-20},{c,0,gz1+20},color,1);
         }
@@ -1247,10 +1254,18 @@ VulkanRenderer::VulkanRenderer() : impl_(std::make_unique<Impl>()) {}
 VulkanRenderer::~VulkanRenderer() = default;
 void VulkanRenderer::initialize() {
     if (!impl_) impl_=std::make_unique<Impl>();
-    try { impl_->init(); }
+    try {
+        LOG_DEBUG("renderer", "Initializing Vulkan instance");
+        impl_->init();
+        LOG_DEBUG("renderer", "Vulkan initialized on device: " + impl_->name);
+    }
     catch (...) { shutdown(); throw; }
 }
-void VulkanRenderer::shutdown() noexcept { impl_.reset(); pixels_.clear(); }
+void VulkanRenderer::shutdown() noexcept {
+    LOG_DEBUG("renderer", "Shutting down Vulkan renderer");
+    impl_.reset();
+    pixels_.clear();
+}
 #ifdef _WIN32
 void VulkanRenderer::set_window(void* hinstance, void* hwnd) {
     if (!impl_) impl_=std::make_unique<Impl>();
@@ -1368,6 +1383,7 @@ void VulkanRenderer::render(const Scene& scene, const EditorCamera& camera, Enti
     initialize();
     try {
         const bool draw_ui=impl_->ui_frame_open;
+        if (!draw_ui) LOG_DEBUG("renderer", "Rendering frame");
         if (draw_ui) {
             ImGui::SetCurrentContext(impl_->ui);
             ImGui::Render();
