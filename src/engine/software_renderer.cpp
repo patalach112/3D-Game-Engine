@@ -74,7 +74,8 @@ struct VulkanRenderer::Impl {
     FrameGeometryCache frame_cache;
     RenderStatistics stats;
     bool descriptors_dirty{true};
-    VkDeviceSize descriptor_object_bytes{},descriptor_indirect_bytes{};
+    bool multi_draw_indirect{},batching_requested{true};
+    VkDeviceSize descriptor_object_bytes{},descriptor_indirect_bytes{},descriptor_tint_bytes{};
     VkDevice device{};
     VkQueue graphics_queue{}, present_queue{};
     std::uint32_t graphics_family{}, present_family{};
@@ -107,12 +108,10 @@ struct VulkanRenderer::Impl {
     ImGuiContext* ui{};
     bool ui_platform{}, ui_frame_open{}, ui_frame_ready{};
     struct Image { VkImage handle{}; VkDeviceMemory memory{}; VkImageView view{}; } color, depth, msaa;
-    struct Buffer { VkBuffer handle{}; VkDeviceMemory memory{}; VkDeviceSize capacity{}; void* mapped{}; } vertices, readback, geometry, object_data, indirect, ui_uv;
+    struct Buffer { VkBuffer handle{}; VkDeviceMemory memory{}; VkDeviceSize capacity{}; void* mapped{}; } vertices, readback, geometry, object_data, indirect, object_tints, ui_uv;
     VkFramebuffer framebuffer{};
     int target_width{}, target_height{};
-    std::vector<DebugAttributes> scratch_attributes;
-    std::vector<engine::Vertex> scratch_debug;
-    std::vector<std::uint32_t> scratch_debug_indices,scratch_hud_indices;
+    std::vector<std::uint32_t> scratch_hud_indices;
     std::vector<Vertex_hud> scratch_hud;
     std::vector<Vec2> scratch_uv;
     bool rendered{};
@@ -280,7 +279,11 @@ void VulkanRenderer::Impl::init() {
     device_info.pQueueCreateInfos=queues.data();
     device_info.enabledExtensionCount=surface?1:0;
     device_info.ppEnabledExtensionNames=surface?&swap_extension:nullptr;
+    VkPhysicalDeviceFeatures supported_features{};vkGetPhysicalDeviceFeatures(physical,&supported_features);
     VkPhysicalDeviceFeatures enabled{}; enabled.drawIndirectFirstInstance=VK_TRUE;
+    enabled.multiDrawIndirect=supported_features.multiDrawIndirect;
+    multi_draw_indirect=enabled.multiDrawIndirect==VK_TRUE;
+    stats.indirect_batching=multi_draw_indirect && batching_requested;
     device_info.pEnabledFeatures=&enabled;
     check(vkCreateDevice(physical,&device_info,nullptr,&device),"Create logical Vulkan device");
     vkGetDeviceQueue(device,graphics_family,0,&graphics_queue);
@@ -467,11 +470,12 @@ void VulkanRenderer::Impl::init_geometry() {
     static_assert(offsetof(DrawIndexedIndirectCommand,firstInstance)==offsetof(VkDrawIndexedIndirectCommand,firstInstance));
     const VkDescriptorSetLayoutBinding bindings[]{
         {0,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_COMPUTE_BIT,nullptr},
-        {1,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr}};
+        {1,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr},
+        {2,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_VERTEX_BIT,nullptr}};
     VkDescriptorSetLayoutCreateInfo set_info{}; set_info.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    set_info.bindingCount=2; set_info.pBindings=bindings;
+    set_info.bindingCount=3; set_info.pBindings=bindings;
     check(vkCreateDescriptorSetLayout(device,&set_info,nullptr,&geometry_set_layout),"Create geometry descriptor layout");
-    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,2};
+    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,3};
     VkDescriptorPoolCreateInfo pool_info{}; pool_info.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_info.maxSets=1; pool_info.poolSizeCount=1; pool_info.pPoolSizes=&size;
     check(vkCreateDescriptorPool(device,&pool_info,nullptr,&geometry_pool),"Create geometry descriptor pool");
@@ -485,7 +489,7 @@ void VulkanRenderer::Impl::init_geometry() {
         info.setLayoutCount=descriptors?1:0; info.pSetLayouts=descriptors?&geometry_set_layout:nullptr;
         check(vkCreatePipelineLayout(device,&info,nullptr,&target),"Create packed geometry pipeline layout");
     };
-    make_layout(object_layout,VK_SHADER_STAGE_VERTEX_BIT,sizeof(CameraPush)+sizeof(Vec4),true);
+    make_layout(object_layout,VK_SHADER_STAGE_VERTEX_BIT,sizeof(CameraPush),true);
     make_layout(hud_layout,VK_SHADER_STAGE_VERTEX_BIT,sizeof(Vec4),false);
     make_layout(cull_layout,VK_SHADER_STAGE_COMPUTE_BIT,sizeof(CameraPush)+sizeof(std::uint32_t),true);
     VkShaderModule module{};
@@ -543,7 +547,7 @@ void VulkanRenderer::Impl::ensure_buffer(Buffer& buffer, VkDeviceSize size, VkBu
     check(vkDeviceWaitIdle(device),"Wait before growing buffer");
     const VkDeviceSize capacity=std::max({size,buffer.capacity*2,VkDeviceSize{4096}});
     destroy_buffer(buffer);
-    if(&buffer==&object_data || &buffer==&indirect)descriptors_dirty=true; // Recreated handles may reuse numeric values.
+    if(&buffer==&object_data || &buffer==&indirect || &buffer==&object_tints)descriptors_dirty=true; // Recreated handles may reuse numeric values.
     VkBufferCreateInfo info{};
     info.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO; info.size=capacity;
     info.usage=usage; info.sharingMode=VK_SHARING_MODE_EXCLUSIVE;
@@ -621,29 +625,9 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
     const auto custom_hud_vertices=frame.geometry.layout.hudVertexCount;
     const auto debug_base=frame.geometry.layout.sceneVertexCount;
     const auto debug_first=frame.geometry.layout.sceneIndexCount;
-    auto& debug_attributes=scratch_attributes;debug_attributes.clear();
-    float debug_scale=1;
-    if (!frame.vertices.empty()) {
-        double extent=0;
-        for (const auto& v:frame.vertices) {
-            extent=std::max({extent,std::abs(static_cast<double>(v.position.x)-camera.position.x),
-                std::abs(static_cast<double>(v.position.y)-camera.position.y),std::abs(static_cast<double>(v.position.z)-camera.position.z)});
-        }
-        debug_scale=static_cast<float>(std::max(1.0,extent/60000.0));
-        auto& packed_debug=scratch_debug;packed_debug.clear();
-        auto& debug_indices=scratch_debug_indices;debug_indices.clear();
-        packed_debug.reserve(frame.vertices.size()); debug_attributes.reserve(frame.vertices.size());debug_indices.reserve(frame.vertices.size()+2);
-        for (const auto& v:frame.vertices) {
-            const Vec3 p{static_cast<float>((static_cast<double>(v.position.x)-camera.position.x)/debug_scale),
-                static_cast<float>((static_cast<double>(v.position.y)-camera.position.y)/debug_scale),
-                static_cast<float>((static_cast<double>(v.position.z)-camera.position.z)/debug_scale)};
-            packed_debug.push_back(make_vertex(p,{0,0,1})); debug_attributes.push_back({v.color,v.grid});
-            debug_indices.push_back(static_cast<std::uint32_t>(debug_indices.size()));
-        }
-        // Mesh ranges are metadata only; debug topology is selected per batch below.
-        while (debug_indices.size()%3) debug_indices.push_back(0);
-        builder.add_mesh(packed_debug,debug_indices);
-    }
+    const auto& debug_attributes=frame.debug_attributes;
+    const float debug_scale=frame.debug_scale;
+    if(!frame.debug_vertices.empty())builder.add_mesh(frame.debug_vertices,frame.debug_indices);
     auto& uv=scratch_uv;uv.clear();
     if (draw_ui) {
         const auto* data=ImGui::GetDrawData();
@@ -665,12 +649,14 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
     const auto& limits=device_properties;
     const auto object_bytes=packed.objects.size()*sizeof(ObjectData);
     const auto indirect_bytes=packed.commands.size()*sizeof(DrawIndexedIndirectCommand);
-    if (object_bytes>limits.limits.maxStorageBufferRange || indirect_bytes>limits.limits.maxStorageBufferRange
+    const auto tint_bytes=packed.tints.size()*sizeof(Vec4);
+    if (object_bytes>limits.limits.maxStorageBufferRange || indirect_bytes>limits.limits.maxStorageBufferRange || tint_bytes>limits.limits.maxStorageBufferRange
         || (static_cast<std::uint64_t>(object_count)+63)/64>limits.limits.maxComputeWorkGroupCount[0])
         throw std::length_error("Geometry exceeds Vulkan storage/dispatch limits");
     ensure_buffer(geometry,std::max<std::size_t>(packed.bytes.size(),1),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT|VK_BUFFER_USAGE_INDEX_BUFFER_BIT|VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     ensure_buffer(object_data,std::max<std::size_t>(object_bytes,sizeof(ObjectData)),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     ensure_buffer(indirect,std::max<std::size_t>(indirect_bytes,sizeof(DrawIndexedIndirectCommand)),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT|VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
+    ensure_buffer(object_tints,std::max<std::size_t>(tint_bytes,sizeof(Vec4)),VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     ensure_buffer(ui_uv,std::max<std::size_t>(uv.size()*sizeof(Vec2),1),VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     create_target(width,height);
     const VkDeviceSize bytes=debug_attributes.size()*sizeof(DebugAttributes);
@@ -681,6 +667,7 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
     if (!packed.bytes.empty()) std::memcpy(geometry.mapped,packed.bytes.data(),packed.bytes.size());
     if (object_bytes) std::memcpy(object_data.mapped,packed.objects.data(),object_bytes);
     if (indirect_bytes) std::memcpy(indirect.mapped,packed.commands.data(),indirect_bytes);
+    if (tint_bytes) std::memcpy(object_tints.mapped,packed.tints.data(),tint_bytes);
     if (!uv.empty()) std::memcpy(ui_uv.mapped,uv.data(),uv.size()*sizeof(Vec2));
     const Basis basis=camera_basis(camera);
     const auto vec4=[](Vec3 p) { return std::array<float,4>{p.x,p.y,p.z,0}; };
@@ -688,16 +675,16 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
     const CameraPush push{vec4(basis.right),vec4(basis.up),vec4(basis.forward),vec4(camera.position),
         {scale*static_cast<float>(scene_view.height)/static_cast<float>(scene_view.width),scale,kNearPlane,100000.0F}};
     if (object_count) {
-        VkDescriptorBufferInfo descriptors[]{{object_data.handle,0,object_bytes},{indirect.handle,0,indirect_bytes}};
-        VkWriteDescriptorSet writes[2]{};
-        for (std::uint32_t i=0;i<2;++i) {
+        VkDescriptorBufferInfo descriptors[]{{object_data.handle,0,object_bytes},{indirect.handle,0,indirect_bytes},{object_tints.handle,0,tint_bytes}};
+        VkWriteDescriptorSet writes[3]{};
+        for (std::uint32_t i=0;i<3;++i) {
             writes[i].sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; writes[i].dstSet=geometry_set;
             writes[i].dstBinding=i; writes[i].descriptorCount=1; writes[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             writes[i].pBufferInfo=&descriptors[i];
         }
-        if(descriptors_dirty || descriptor_object_bytes!=object_bytes || descriptor_indirect_bytes!=indirect_bytes) {
-            vkUpdateDescriptorSets(device,2,writes,0,nullptr);
-            descriptors_dirty=false;descriptor_object_bytes=object_bytes;descriptor_indirect_bytes=indirect_bytes;++stats.descriptor_updates;
+        if(descriptors_dirty || descriptor_object_bytes!=object_bytes || descriptor_indirect_bytes!=indirect_bytes || descriptor_tint_bytes!=tint_bytes) {
+            vkUpdateDescriptorSets(device,3,writes,0,nullptr);
+            descriptors_dirty=false;descriptor_object_bytes=object_bytes;descriptor_indirect_bytes=indirect_bytes;descriptor_tint_bytes=tint_bytes;++stats.descriptor_updates;
         }
         vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,cull_pipeline);
         vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,cull_layout,0,1,&geometry_set,0,nullptr);
@@ -730,10 +717,17 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
         vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_GRAPHICS,object_pipeline);
         vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_GRAPHICS,object_layout,0,1,&geometry_set,0,nullptr);
         vkCmdPushConstants(command,object_layout,VK_SHADER_STAGE_VERTEX_BIT,0,sizeof(push),&push);
-        for (std::uint32_t i=0;i<object_count;++i) {
-            vkCmdPushConstants(command,object_layout,VK_SHADER_STAGE_VERTEX_BIT,sizeof(push),sizeof(Vec4),&packed.tints[i]);
-            vkCmdDrawIndexedIndirect(command,indirect.handle,i*sizeof(DrawIndexedIndirectCommand),1,sizeof(DrawIndexedIndirectCommand));
+        // Tint is indexed by firstInstance in an SSBO, not changed by a CPU
+        // push-constant command for every object. Preserve the single-draw
+        // fallback on devices without the optional multiDrawIndirect feature.
+        const auto batch_limit=multi_draw_indirect && batching_requested?
+            std::max(1U,device_properties.limits.maxDrawIndirectCount):1U;
+        for(std::uint32_t first=0;first<object_count;) {
+            const auto count=std::min(batch_limit,object_count-first);
+            vkCmdDrawIndexedIndirect(command,indirect.handle,static_cast<VkDeviceSize>(first)*sizeof(DrawIndexedIndirectCommand),count,sizeof(DrawIndexedIndirectCommand));
+            first+=count;++stats.indirect_draw_calls;
         }
+        stats.indirect_objects+=object_count;
     }
     const VkBuffer debug_buffers[]{geometry.handle,vertices.handle};
     const VkDeviceSize debug_offsets[]{packed.layout.sceneVertices+debug_base*sizeof(engine::Vertex),0};
@@ -959,7 +953,7 @@ void VulkanRenderer::Impl::cleanup() noexcept {
             ui=nullptr;
         }
         destroy_swapchain(); destroy_target(); destroy_buffer(vertices); destroy_buffer(readback);
-        for (auto* b:{&geometry,&object_data,&indirect,&ui_uv}) destroy_buffer(*b);
+        for (auto* b:{&geometry,&object_data,&indirect,&object_tints,&ui_uv}) destroy_buffer(*b);
         for (auto p:{object_pipeline,hud_pipeline,cull_pipeline}) if (p) vkDestroyPipeline(device,p,nullptr);
         for (auto p:{object_layout,hud_layout,cull_layout}) if (p) vkDestroyPipelineLayout(device,p,nullptr);
         if (geometry_pool) vkDestroyDescriptorPool(device,geometry_pool,nullptr);
@@ -982,6 +976,11 @@ void VulkanRenderer::Impl::cleanup() noexcept {
 
 VulkanRenderer::VulkanRenderer() : impl_(std::make_unique<Impl>()) {}
 VulkanRenderer::~VulkanRenderer() = default;
+void VulkanRenderer::set_indirect_batching(bool enabled) {
+    if(!impl_)impl_=std::make_unique<Impl>();
+    impl_->batching_requested=enabled;
+    impl_->stats.indirect_batching=enabled && impl_->multi_draw_indirect;
+}
 void VulkanRenderer::initialize() {
     if (!impl_) impl_=std::make_unique<Impl>();
     if (impl_->device) return;

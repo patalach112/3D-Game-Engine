@@ -1,6 +1,7 @@
 #include "editor_app.hpp"
 #include "hud_editor.hpp"
 #include "settings.hpp"
+#include "hud_style.hpp"
 #include "dock_layout.hpp"
 #include "engine/log.hpp"
 #include <algorithm>
@@ -16,6 +17,34 @@ constexpr float title_height=40;
 struct Deferred { Kind kind{Kind::Panel};Id parent{},erase{};bool add{}; } pending;
 ImVec2 last_canvas{};
 int hit_priority{};
+HierarchyIndex hierarchy;
+Palette inherited_palette(Id parent) {
+    auto& doc=app().hud;
+    for(unsigned depth=0;parent && depth<32;++depth) {
+        const auto* n=doc.find(parent);if(!n)break;
+        if(n->custom_colors)return n->palette;
+        parent=n->parent;
+    }
+    return doc.palette;
+}
+void palette_edit(Palette& palette) {
+    constexpr const char* labels[]{"Tło okna / menu","Tło panelu","Tekst","Obramowanie","Przycisk / pole",
+        "Po najechaniu","Po wciśnięciu / zaznaczeniu","Akcent"};
+    for(std::size_t i=0;i<palette.colors.size();++i)
+        if(ImGui::ColorEdit4(labels[i],palette.colors[i].data(),ImGuiColorEditFlags_AlphaBar|ImGuiColorEditFlags_AlphaPreviewHalf))app().hud_dirty=true;
+}
+void node_colors(Node& n) {
+    bool custom=n.custom_colors;
+    if(ImGui::Checkbox("Własne kolory",&custom)) {
+        if(custom)n.palette=inherited_palette(n.parent);
+        n.custom_colors=custom;app().hud_dirty=true;
+    }
+    if(n.custom_colors) {
+        palette_edit(n.palette);
+        if(ImGui::Button("Dziedzicz kolory")){n.custom_colors=false;app().hud_dirty=true;}
+    } else ImGui::TextWrapped("Kolory dziedziczone z kontenera lub palety całego HUD-u.");
+}
+
 float radius(const Node& n) {return n.rounded?(n.shared_rounding?app().hud.default_rounding:n.rounding):0;}
 const char* kind_name(Kind k) {
     switch(k) {case Kind::Bar:return "Pasek górny";case Kind::Window:return "Okno";case Kind::Panel:return "Panel";
@@ -49,7 +78,7 @@ void button_properties(Node& n) {
     change(ImGui::Checkbox("Aktywny",&n.enabled));
     if(n.kind==Kind::Button || n.kind==Kind::List) {
         bool submenu=n.kind==Kind::List;
-        bool has_children=false;for(const auto& c:app().hud.nodes) has_children|=c.parent==n.id;
+        const bool has_children=!hierarchy.children(n.id).empty();
         ImGui::BeginDisabled(has_children);
         if(ImGui::Checkbox("Wysuwana lista",&submenu)) {n.kind=submenu?Kind::List:Kind::Button;app().hud_dirty=true;}
         ImGui::EndDisabled();
@@ -88,12 +117,13 @@ void execute(const Node& n) {
 void menu_children(Id parent,Id window);
 void menu_node(Node& n,Id window) {
     auto& g=app();
+    const HudColors colors(n.palette,n.custom_colors);
     ImGui::PushID(static_cast<int>(n.id));
     const auto spacing=ImGui::GetStyle().ItemSpacing;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{spacing.x,std::max(spacing.y,n.minimum.y-ImGui::GetFontSize())});
     if(n.kind==Kind::List) {
         float width=n.minimum.x;
-        for(const auto& child:g.hud.nodes)if(child.parent==n.id && child.visible)width=std::max(width,child.minimum.x);
+        for(auto i:hierarchy.children(n.id)) {const auto& child=g.hud.nodes[i];if(child.visible)width=std::max(width,child.minimum.x);}
         ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding,radius(n));
         ImGui::SetNextWindowSizeConstraints({width,0},{FLT_MAX,FLT_MAX});
         const bool open=ImGui::BeginMenu(n.text.c_str(),n.enabled);item_hit(n,0,window);
@@ -116,10 +146,12 @@ void menu_node(Node& n,Id window) {
     ImGui::PopStyleVar();ImGui::PopID();
 }
 void menu_children(Id parent,Id window) {
-    for(auto& n:app().hud.nodes) if(n.parent==parent && n.visible) menu_node(n,window);
+    for(auto i:hierarchy.children(parent)) {auto& n=app().hud.nodes[i];if(n.visible)menu_node(n,window);}
 }
 void chrome() {
-    auto& g=app();Node* bar=nullptr;for(auto& n:g.hud.nodes) if(n.kind==Kind::Bar)bar=&n;
+    auto& g=app();Node* bar=nullptr;for(auto i:hierarchy.children(0))if(g.hud.nodes[i].kind==Kind::Bar)bar=&g.hud.nodes[i];
+    HudColors base_colors(g.hud.palette,g.hud.custom_colors);
+    HudColors bar_colors(bar?bar->palette:g.hud.palette,bar && bar->custom_colors);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,{8,6});
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{4,4});
     ImGui::BeginViewportSideBar("##HUD_Title",ImGui::GetMainViewport(),ImGuiDir_Up,title_height,
@@ -132,7 +164,7 @@ void chrome() {
             if(ImGui::IsWindowHovered() && ImGui::GetMousePos().x<g.width-146) hit(bar->id,0,0);
             const float right=static_cast<float>(g.width)-160;
             bool overflow=false;
-            for(auto& n:g.hud.nodes) if(n.parent==bar->id && n.visible) {
+            for(auto i:hierarchy.children(bar->id)) {auto& n=g.hud.nodes[i];if(!n.visible)continue;
                 if(ImGui::GetCursorPosX()+ImGui::CalcTextSize(n.text.c_str()).x+32>right) {overflow=true;break;}
                 menu_node(n,0);
             }
@@ -140,6 +172,7 @@ void chrome() {
             if(ImGui::GetCursorPosX()+ImGui::CalcTextSize(bar->text.c_str()).x+20<right) ImGui::TextDisabled("  %s",bar->text.c_str());
         }
         g.title_drag_bounds={static_cast<LONG>(std::ceil(ImGui::GetCursorScreenPos().x)),0,std::max(0,g.width-146),40};
+        bar_colors.pop();base_colors.pop(); // Native controls are not editable project widgets.
         ImGui::SetCursorPosX(static_cast<float>(g.width-144));
         if(ImGui::Button("-##native_min",{44,28})) PostMessageW(g.hwnd,WM_SYSCOMMAND,SC_MINIMIZE,0);
         if(ImGui::Button(IsZoomed(g.hwnd)?"<>##native_max":"[]##native_max",{44,28})) PostMessageW(g.hwnd,WM_SYSCOMMAND,IsZoomed(g.hwnd)?SC_RESTORE:SC_MAXIMIZE,0);
@@ -151,12 +184,12 @@ void chrome() {
 }
 void children(Node& parent,Id window);
 void widget(Node& n,Id panel,Id window,ImVec2 size) {
-    auto& g=app();ImGui::PushID(static_cast<int>(n.id));
+    auto& g=app();const HudColors colors(n.palette,n.custom_colors);ImGui::PushID(static_cast<int>(n.id));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,radius(n));
     if(n.kind==Kind::Panel) {
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding,radius(n));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{n.padding.x,n.padding.y});
-        ImGui::PushStyleColor(ImGuiCol_ChildBg,n.builtin=="scene"?ImVec4{0,0,0,0}:ImVec4{.14F,.15F,.17F,1});
+        ImGui::PushStyleColor(ImGuiCol_ChildBg,n.builtin=="scene"?ImVec4{0,0,0,0}:ImGui::GetStyleColorVec4(ImGuiCol_ChildBg));
         const bool open=ImGui::BeginChild("##panel",size,ImGuiChildFlags_Borders);
         if(ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows|ImGuiHoveredFlags_AllowWhenBlockedByPopup)) hit(n.id,n.id,window);
         if(open) {
@@ -173,7 +206,7 @@ void widget(Node& n,Id panel,Id window,ImVec2 size) {
             if(ImGui::Button(n.text.c_str(),size)) {if(design())g.hud_selected=n.id;ImGui::OpenPopup("##list");}
             item_hit(n,panel,window);
             float width=n.minimum.x;
-            for(const auto& child:g.hud.nodes)if(child.parent==n.id && child.visible)width=std::max(width,child.minimum.x);
+            for(auto i:hierarchy.children(n.id)) {const auto& child=g.hud.nodes[i];if(child.visible)width=std::max(width,child.minimum.x);}
             ImGui::SetNextWindowSizeConstraints({width,0},{FLT_MAX,FLT_MAX});
             ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding,radius(n));
             if(ImGui::BeginPopup("##list")) {
@@ -199,7 +232,7 @@ void widget(Node& n,Id panel,Id window,ImVec2 size) {
 void children(Node& parent,Id window) {
     const ImVec2 origin=ImGui::GetCursorScreenPos(),avail=ImGui::GetContentRegionAvail();
     float x=0,y=0,row=0;bool any=false;
-    for(auto& n:app().hud.nodes) if(n.parent==parent.id && n.visible) {
+    for(auto i:hierarchy.children(parent.id)) {auto& n=app().hud.nodes[i];if(!n.visible)continue;
         any=true;
         float w=std::max(parent.button_minimum.x,n.minimum.x),h=std::max(parent.button_minimum.y,n.minimum.y);
         if(n.kind==Kind::Panel) {w=std::max(n.minimum.x,avail.x*n.rect.w);h=std::max(n.minimum.y,avail.y*n.rect.h);}
@@ -212,10 +245,10 @@ void children(Node& parent,Id window) {
     }
     if(any) {ImGui::SetCursorScreenPos({origin.x,origin.y+y+row+parent.gap.y});ImGui::Dummy({0,0});}
 }
-bool scene_window(const Node& w) {for(const auto& n:app().hud.nodes) if(n.parent==w.id && n.builtin=="scene")return true;return false;}
+bool scene_window(const Node& w) {for(auto i:hierarchy.children(w.id))if(app().hud.nodes[i].builtin=="scene")return true;return false;}
 Size window_minimum(const Node& w) {
     Size s=w.minimum;
-    for(const auto& n:app().hud.nodes) if(n.parent==w.id && n.visible) {
+    for(auto i:hierarchy.children(w.id)) {const auto& n=app().hud.nodes[i];if(!n.visible)continue;
         s.x=std::max(s.x,std::max(n.minimum.x,n.button_minimum.x+2*n.padding.x)+2*w.padding.x);
         s.y=std::max(s.y,std::min(8192.0F,n.minimum.y+2*w.padding.y+30));
     }
@@ -233,7 +266,7 @@ void dockspace(ImVec2 pos,ImVec2 size) {
         for(const auto& n:g.hud.nodes) if(n.kind==Kind::Window && n.dock!=Dock::Floating) {
             const auto target=n.dock==Dock::Left?left:n.dock==Dock::Right?right:n.dock==Dock::Bottom?bottom:center;
             const auto name=window_name(n);ImGui::DockBuilderDockWindow(name.c_str(),target);
-            for(const auto& p:g.hud.nodes) if(p.parent==n.id && p.builtin=="console")
+            for(auto i:hierarchy.children(n.id)) if(g.hud.nodes[i].builtin=="console")
                 ImGui::DockBuilderGetNode(bottom)->SelectedTabId=ImHashStr("#TAB",0,ImHashStr(name.c_str()));
         }
         ImGui::DockBuilderFinish(id);g.hud_reset=false;
@@ -245,10 +278,11 @@ void dockspace(ImVec2 pos,ImVec2 size) {
     ImGui::PopStyleVar(2);ImGui::DockSpace(id,{0,0});ImGui::End();
 }
 void windows(ImVec2 pos,ImVec2 canvas) {
-    auto& g=app();dockspace(pos,canvas);
+    auto& g=app();const HudColors base_colors(g.hud.palette,g.hud.custom_colors);dockspace(pos,canvas);
     const bool resized=canvas.x!=last_canvas.x || canvas.y!=last_canvas.y;last_canvas=canvas;
     g.viewport_bounds={};g.viewport_visible=false;g.scene_drawlist=nullptr;
-    for(auto& n:g.hud.nodes) if(n.kind==Kind::Window && n.visible) {
+    for(auto i:hierarchy.children(0)) {auto& n=g.hud.nodes[i];if(n.kind!=Kind::Window || !n.visible)continue;
+        const HudColors colors(n.palette,n.custom_colors);
         const auto name=window_name(n);const bool scene=scene_window(n);
         const auto* existing=ImGui::FindWindowByName(name.c_str());
         const auto min=window_minimum(n);
@@ -280,9 +314,9 @@ void windows(ImVec2 pos,ImVec2 canvas) {
 }
 void tree(Id parent) {
     auto& g=app();
-    for(const auto& n:g.hud.nodes) if(n.parent==parent) {
+    for(auto i:hierarchy.children(parent)) {const auto& n=g.hud.nodes[i];
         ImGui::PushID(static_cast<int>(n.id));
-        bool has_child=false;for(const auto& c:g.hud.nodes)has_child|=c.parent==n.id;
+        const bool has_child=!hierarchy.children(n.id).empty();
         auto flags=ImGuiTreeNodeFlags_OpenOnArrow|ImGuiTreeNodeFlags_SpanAvailWidth;
         if(!has_child)flags|=ImGuiTreeNodeFlags_Leaf|ImGuiTreeNodeFlags_NoTreePushOnOpen;
         if(g.hud_selected==n.id)flags|=ImGuiTreeNodeFlags_Selected;
@@ -302,6 +336,12 @@ void inspector(float top,float height) {
     if(!n) {
         size_edit("Minimum okna aplikacji",g.hud.window_minimum,300,8192);
         change(ImGui::SliderFloat("Podstawowe zaokrąglenie",&g.hud.default_rounding,0,100,"%.0f px"));
+        if(ImGui::CollapsingHeader("Kolory całego HUD-u",ImGuiTreeNodeFlags_DefaultOpen)) {
+            change(ImGui::Checkbox("Użyj palety projektu",&g.hud.custom_colors));
+            ImGui::BeginDisabled(!g.hud.custom_colors);palette_edit(g.hud.palette);
+            if(ImGui::Button("Domyślna paleta")){g.hud.palette=Palette{};g.hud_dirty=true;}
+            ImGui::EndDisabled();
+        }
         bool status=false;for(const auto& c:g.hud.nodes)status|=c.kind==Kind::Footer;
         if(!status && ImGui::Button("Dodaj pasek stanu"))pending={Kind::Footer,0,0,true};
     } else {
@@ -319,6 +359,7 @@ void inspector(float top,float height) {
             change(ImGui::SliderFloat("Wysokość paska",&n->minimum.y,20,100,"%.0f px"));
             ImGui::TextWrapped("Znaczniki: {status}, {objects}, {fps}, {limit}. Pasek jest częścią zapisanego HUD-u.");
         } else if(n->kind!=Kind::Bar) button_properties(*n);
+        if(ImGui::CollapsingHeader("Kolory",ImGuiTreeNodeFlags_DefaultOpen))node_colors(*n);
         if(n->kind==Kind::Input) {text_edit("Tekst początkowy",n->value);g.hud_inputs.erase(n->id);}
         if(n->kind!=Kind::Bar && ImGui::Button("Usuń element i zawartość"))pending.erase=n->id;
         ImGui::PopID();
@@ -352,6 +393,7 @@ void context_menu(ImVec2 canvas) {
     }
     if(panel && ImGui::BeginMenu("Layout")) {layout_properties(*panel);ImGui::EndMenu();}
     if(n && (n->kind==Kind::Button || n->kind==Kind::List) && ImGui::BeginMenu("Ustawienia przycisku / listy")) {button_properties(*n);ImGui::EndMenu();}
+    if(n && ImGui::BeginMenu("Kolory")){node_colors(*n);ImGui::EndMenu();}
     ImGui::Separator();
     if((panel || window) && ImGui::BeginMenu("Ustawienia panelu i okna")) {
         if(panel && ImGui::BeginMenu("Panel")) {container_properties(*panel,true);ImGui::EndMenu();}
@@ -417,10 +459,12 @@ void footer() {
         ImGui::TextDisabled("%s%s | %s",g.hud_dirty?"* ":"","editor_hud.layout",g.hud_message.c_str());ImGui::End();
     }
     if(auto* node=project_footer()) {
+        const HudColors base_colors(g.hud.palette,g.hud.custom_colors);
+        const HudColors colors(node->palette,node->custom_colors);
         ImGui::BeginViewportSideBar("##HUD_Project_Status",ImGui::GetMainViewport(),ImGuiDir_Down,std::clamp(node->minimum.y,20.0F,100.0F),
             ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoScrollbar);
         ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
-        const auto text=footer_text(*node);ImGui::TextDisabled("%s",text.c_str());
+        const auto text=footer_text(*node);ImGui::TextUnformatted(text.c_str());
         if(ImGui::IsWindowHovered())hit(node->id,0,0);
         ImGui::End();
     }
@@ -460,12 +504,16 @@ bool save_hud() {
 }
 void draw_document_ui() {
     auto& g=app();g.hud_hit=g.hud_hit_panel=g.hud_hit_window=0;hit_priority=0;
+    hierarchy.update(g.hud);
     chrome();
     auto* status=project_footer();
     const float bottom=(status?std::clamp(status->minimum.y,20.0F,100.0F):0)+(g.hud_designer?24:0);
     const float top=title_height+(g.hud_designer?34:0),height=std::max(1.0F,static_cast<float>(g.height)-top-bottom);
     const float width=std::max(1.0F,static_cast<float>(g.width)-(g.hud_designer&&g.hud_inspector?330:0));
-    if(g.hud_designer) {toolbar();if(g.hud_inspector)inspector(top,height);}
+    if(g.hud_designer) {
+        toolbar();hierarchy.update(g.hud); // toolbar may replace/reload the entire document
+        if(g.hud_inspector)inspector(top,height);
+    }
     windows({0,top},{width,height});g.docking_initialized=true;
     footer();
     draw_settings_window();

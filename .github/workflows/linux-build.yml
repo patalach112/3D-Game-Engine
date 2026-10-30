@@ -15,7 +15,19 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ninja-build nasm libvulkan-dev glslang-tools mesa-vulkan-drivers libx11-dev xvfb
       - run: cmake -S . -B build -G Ninja -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release -DENGINE_USE_ASM=${{ matrix.asm }} -DENGINE_BUILD_WINDOW_EXAMPLE=ON -DCMAKE_CXX_FLAGS=-Werror
       - run: cmake --build build --parallel 2
-      - run: ctest --test-dir build --output-on-failure
+      - name: Test CPU and Vulkan paths
+        shell: bash
+        run: |
+          if ctest --test-dir build --output-on-failure 2>&1 | tee tests.log; then
+            ./build/hud_tests --benchmark
+          else
+            code=${PIPESTATUS[0]}
+            details=$(tail -100 tests.log)
+            details=${details//%/%25}
+            details=${details//$'\n'/%0A}
+            echo "::error::$details"
+            exit "$code"
+          fi
       - name: Create and close real X11 windows
         run: xvfb-run -a ./build/platform_tests --window
       - name: Test installed library lookup and packaging

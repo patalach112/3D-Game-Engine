@@ -156,6 +156,8 @@ void graphics() {
     ImGui::Text("CPU geometrii: %.2f us (nie czas GPU)",stats.geometry_cpu_us);
     ImGui::Text("Geometria: %llu przebudów / %llu trafień cache",static_cast<unsigned long long>(stats.geometry_builds),static_cast<unsigned long long>(stats.geometry_cache_hits));
     ImGui::Text("Aktualizacje deskryptorów: %llu",static_cast<unsigned long long>(stats.descriptor_updates));
+    ImGui::Text("Indirect: %llu obiektów / %llu wywołań (łącznie)",static_cast<unsigned long long>(stats.indirect_objects),static_cast<unsigned long long>(stats.indirect_draw_calls));
+    ImGui::TextDisabled("Multi-draw indirect: %s",stats.indirect_batching?"aktywny":"fallback pojedynczych wywołań");
     if(ImGui::CollapsingHeader("Zaawansowane")) {
         ImGui::Checkbox("Pokaż siatkę",&g.grid_visible);ImGui::SliderFloat("Pole widzenia",&g.camera.vertical_fov_degrees,30,100,"%.0f°");
         float bg[]{g.background_color.x,g.background_color.y,g.background_color.z};

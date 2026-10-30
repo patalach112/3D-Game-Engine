@@ -233,3 +233,55 @@ Dodatkowe testy opt-in (`BUILD_TESTING=ON`): `bindings_tests` — zapis, walidac
 konflikty i migracja v1; `geometry_cache_tests` — unieważnianie cache po zmianach;
 Windows `editor_state_tests` — niedokowalne ustawienia, przechwytywanie skrótów,
 konflikty, przywracanie, nieaktywne bindy projektanta i remapowanie w runtime.
+
+
+## Kolory projektu (HUD v3)
+
+W `editor_hud.exe` wybierz **Całe okno aplikacji → Kolory całego HUD-u**,
+aby edytować wspólną paletę. Po zaznaczeniu elementu sekcja **Kolory → Własne
+kolory** pozwala nadać mu oddzielną paletę. To samo menu jest dostępne pod PPM.
+Elementy bez własnej palety dziedziczą kolory kontenera, a ostatecznie projektu.
+Przycisk **Dziedzicz kolory** usuwa lokalne nadpisanie; **Domyślna paleta**
+przywraca paletę aplikacji.
+
+Edytowane role RGBA: tło okna/menu, tło panelu, tekst, obramowanie, przycisk/pole,
+stan po najechaniu, wciśnięcie/zaznaczenie i akcent. Edytor obsługuje kanał alfa,
+próbnik oraz podgląd na żywo. Zapisz **Ctrl+S** / **Zapisz HUD**; zwykły
+`engine_editor.exe` odczytuje tę samą paletę z `editor_hud.layout`.
+Przezroczysty obszar sceny pozostaje przeznaczony dla renderera 3D — kolor
+czyszczenia sceny nadal ustawia się w Grafika → Zaawansowane.
+
+Format `STUDIO_HUD 3` zapisuje paletę projektu i nadpisania elementów.
+Wczytywanie wersji 1 i 2 nadal działa, z wyłączonymi nadpisaniami kolorów.
+Nieprawidłowe składowe (NaN/Inf, spoza 0–1) są odrzucane przed zastąpieniem
+pliku. Projekt nie zmienia wyglądu inspektora, Settings ani stylu natywnych
+przycisków minimalizacji/maksymalizacji/zamknięcia.
+
+## Kolejne optymalizacje CPU / Vulkan
+
+- **Indeks hierarchii HUD**: kolejność dzieci jest zapamiętywana; odświeżenie
+  porównuje ID/rodziców, więc bezpośrednie edycje publicznych pól, usuwanie,
+  przestawianie elementów i przeładowanie dokumentu nie zostawiają starych
+  wskaźników. Nazwa, kolor i widoczność nie wymuszają przebudowy indeksu.
+  Drzewo, menu i układ dzieci nie skanują już całego dokumentu dla każdego węzła.
+- **Pakowanie debug geometry** (siatka, obrysy, gizmo, normalizacja dużych
+  współrzędnych do FP16) jest częścią istniejącego cache sceny/kamery. Przy
+  niezmienionej scenie nie wykonuje się ponownego skanowania zasięgu ani konwersji
+  każdego wierzchołka. Zmiany kamery, transformacji, zaznaczenia, widoku i trybu
+  gizmo nadal unieważniają cache.
+- **Multi-draw indirect**: tinty obiektów są w osobnym SSBO indeksowanym przez
+  `firstInstance`, a nie w push constants aktualizowanych dla każdego obiektu.
+  Sterowniki obsługujące opcjonalne `multiDrawIndirect` dostają grupy do
+  `maxDrawIndirectCount`; pozostałe nadal działają z pojedynczymi wywołaniami.
+  `set_indirect_batching(false)` pozwala porównać ścieżkę referencyjną.
+  Liczniki wywołań i obiektów widać w Settings → Grafika (wartości sumaryczne).
+
+`ObjectData` (32 B), `DrawIndexedIndirectCommand` (20 B) i kolejność wspólnego
+bufora **HUD vertices → 3D vertices → HUD indices → 3D indices** pozostają
+bez zmian. Nowy SSBO tintów dotyczy tylko 3D. Należy przebudować oba EXE i DLL
+razem: model HUD i struktura statystyk zostały rozszerzone.
+
+Opt-in `hud_tests --benchmark` mierzy tylko CPU indeksowania hierarchii,
+a nie FPS/GPU. Test GPU porównuje obraz obu ścieżek indirect piksel w piksel,
+w tym różne tinty, `firstIndex`, `vertexOffset` i culling. Testy nadal domyślnie
+nie są kompilowane (`BUILD_TESTING=OFF`).

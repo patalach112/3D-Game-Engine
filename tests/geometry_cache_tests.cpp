@@ -6,8 +6,12 @@ int main() {
     engine::EditorCamera camera;engine::internal::FrameGeometryCache cache;
     auto update=[&]{return &cache.update(scene,camera,id,800,600,true,0);};
     const auto* first=update();const auto bytes=first->geometry.bytes;
+    const auto* debug_data=first->debug_vertices.data();
+    assert(!first->debug_vertices.empty() && first->debug_attributes.size()==first->vertices.size());
+    assert(first->debug_vertices.size()==first->vertices.size() && first->debug_indices.size()%3==0);
     for(int i=0;i<100;++i)assert(update()==first);
     assert(cache.builds==1&&cache.hits==100&&cache.frame.geometry.bytes==bytes);
+    assert(cache.frame.debug_vertices.data()==debug_data); // No repacking/reallocation on a hit.
     scene.find_entity(id)->name="Rename does not change geometry";update();assert(cache.builds==1);
     scene.find_entity(id)->transform.position.x=3;update();assert(cache.builds==2);
     scene.find_entity(id)->transform.rotation.y=20;update();assert(cache.builds==3);
