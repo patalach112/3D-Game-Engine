@@ -110,7 +110,7 @@ Document defaults() {
     const auto list=[&](Id p,const char* text){return d.add(Kind::List,p,text);};
     const auto button=[&](Id p,const char* text,const char* action){const auto id=d.add(Kind::Button,p,text);d.find(id)->action=action;return id;};
     auto f=list(bar,"Plik");
-    button(f,"Importuj OBJ","model.import"); d.find(button(f,"Eksport",""))->enabled=false;
+    button(f,"Importuj model 3D","model.import"); d.find(button(f,"Eksport",""))->enabled=false;
     button(f,"Zapisz scenę","scene.save"); button(f,"Ustawienia","settings"); button(f,"Zamknij","app.close");
     auto t=list(bar,"Narzędzia");
     button(t,"Przesuwanie","tool.move");button(t,"Obracanie","tool.rotate");button(t,"Skalowanie","tool.scale");
@@ -174,8 +174,11 @@ bool load(const std::filesystem::path& path,Document& out,std::string& error) {
             if(parent&&!children(parent))d.erase(parent);
         }
         // Upgrade the old disabled placeholder without altering custom import actions.
-        for(auto& n:d.nodes)if(n.kind==Kind::Button&&n.text=="Import"&&n.action.empty()&&!n.enabled) {
-            n.text="Importuj OBJ";n.action="model.import";n.enabled=true;
+        for(auto& n:d.nodes) {
+            if(n.kind==Kind::Button&&n.text=="Import"&&n.action.empty()&&!n.enabled) {
+                n.text="Importuj model 3D";n.action="model.import";n.enabled=true;
+            } else if(n.action=="model.import"&&(n.text=="Importuj OBJ"||n.text=="Importuj model OBJ"))
+                n.text="Importuj model 3D";
         }
         const bool has_import=std::any_of(d.bindings.begin(),d.bindings.end(),[](const Binding& b){return b.action=="model.import";});
         const bool ctrl_i_used=std::any_of(d.bindings.begin(),d.bindings.end(),[](const Binding& b){return b.key=='I'&&b.modifiers==Ctrl;});

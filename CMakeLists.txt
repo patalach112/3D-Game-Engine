@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(Starter3DEngine VERSION 0.3.0 LANGUAGES CXX)
 
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # Ninja/MinGW is a single-config generator; make a plain configure optimized by default.
 # Otherwise `cmake --build ... --config Release` does not enable optimization there.
 if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
@@ -23,6 +25,35 @@ endif()
 # Vulkan SDK supplies headers/loader and glslc (or glslangValidator).
 find_package(Vulkan 1.1 REQUIRED)
 find_package(Threads REQUIRED)
+
+# Prefer a system package, otherwise fetch a pinned Assimp release. Assimp keeps
+# format-specific parsers out of the engine and provides one validated import
+# path for FBX, glTF/GLB, COLLADA, STL, PLY, 3DS, OBJ and many other formats.
+find_package(assimp 5.2 CONFIG QUIET)
+if(NOT TARGET assimp::assimp AND NOT TARGET assimp)
+    include(FetchContent)
+    set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ZLIB ON CACHE BOOL "" FORCE)
+    set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ALL_EXPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(assimp
+        URL https://github.com/assimp/assimp/archive/refs/tags/v5.4.3.tar.gz
+        URL_HASH SHA256=66dfbaee288f2bc43172440a55d0235dfc7bf885dda6435c038e8000e79582cb
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    FetchContent_MakeAvailable(assimp)
+endif()
+if(TARGET assimp::assimp)
+    set(ENGINE_ASSIMP_TARGET assimp::assimp)
+elseif(TARGET assimp)
+    set(ENGINE_ASSIMP_TARGET assimp)
+else()
+    message(FATAL_ERROR "Assimp target was not provided")
+endif()
+
 find_program(ENGINE_GLSLC NAMES glslc HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin")
 find_program(ENGINE_GLSLANG NAMES glslangValidator glslang HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin")
 if(NOT ENGINE_GLSLC AND NOT ENGINE_GLSLANG)
@@ -94,7 +125,7 @@ add_library(engine_core SHARED
     src/engine/platform.cpp
     ${ENGINE_PLATFORM_SOURCE}
     src/engine/scene.cpp
-    src/engine/obj_loader.cpp
+    src/engine/model_loader.cpp
     src/engine/software_renderer.cpp
     src/engine/render/mesh_builder.cpp
     src/engine/render/geometry.cpp
@@ -111,7 +142,7 @@ add_library(engine_core SHARED
 target_include_directories(engine_core PUBLIC include PRIVATE "${SHADER_DIR}")
 # One ImGui implementation in the shared engine; consumers use the same ABI/config.
 target_include_directories(engine_core SYSTEM PUBLIC src/engine/ui/third_party/imgui)
-target_link_libraries(engine_core PUBLIC Threads::Threads PRIVATE Vulkan::Vulkan)
+target_link_libraries(engine_core PUBLIC Threads::Threads PRIVATE Vulkan::Vulkan ${ENGINE_ASSIMP_TARGET})
 target_compile_definitions(engine_core PRIVATE ENGINE_BUILD_DLL)
 set_target_properties(engine_core PROPERTIES OUTPUT_NAME engine
     VERSION ${PROJECT_VERSION} SOVERSION 1)
@@ -204,7 +235,7 @@ if(BUILD_TESTING)
         target_compile_options(ui_tests PRIVATE -UNDEBUG)
     endif()
     add_test(NAME ui_tests COMMAND ui_tests)
-    foreach(TEST IN ITEMS bindings_tests geometry_cache_tests hud_tests obj_loader_tests geometry_tests geometry_gpu_tests input_tests render_worker_tests
+    foreach(TEST IN ITEMS bindings_tests geometry_cache_tests hud_tests model_loader_tests geometry_tests geometry_gpu_tests input_tests render_worker_tests
             camera_smoothing_tests render_worker_gpu_tests log_tests docking_tests primitives_gpu_tests)
         add_executable(${TEST} tests/${TEST}.cpp)
         target_link_libraries(${TEST} PRIVATE engine_core)
@@ -264,6 +295,7 @@ endif()
 install(FILES README.md DESTINATION .)
 install(FILES docs/objects.md docs/threading.md docs/editor_ui.md DESTINATION docs)
 install(FILES src/engine/ui/third_party/imgui/LICENSE.txt DESTINATION licenses RENAME Dear-ImGui.txt)
+install(FILES licenses/Assimp.txt DESTINATION licenses)
 set(CPACK_GENERATOR ZIP)
 set(CPACK_PACKAGE_NAME Starter3DEngine)
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")

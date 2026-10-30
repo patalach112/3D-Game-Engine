@@ -103,7 +103,7 @@ void inspector() {
         if(ImGui::ColorEdit3("##ObjectColor",color,ImGuiColorEditFlags_DisplayRGB|ImGuiColorEditFlags_PickerHueWheel))
             entity->color={color[0],color[1],color[2]};
         ImGui::TextDisabled("Kolor bazowy / oświetlenie sceny");
-        if(entity->mesh)ImGui::TextDisabled("OBJ: %zu wierzchołków / %zu trójkątów",entity->mesh->vertices.size(),entity->mesh->triangles.size());
+        if(entity->mesh)ImGui::TextDisabled("Model: %zu wierzchołków / %zu trójkątów",entity->mesh->vertices.size(),entity->mesh->triangles.size());
     }
     ImGui::Spacing();
     if (ImGui::CollapsingHeader("Sterowanie",ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -147,7 +147,7 @@ void title_bar() {
           ImGuiWindowFlags_MenuBar|ImGuiWindowFlags_NoScrollbar);
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("Plik")) {
-            if (ImGui::MenuItem("Importuj model OBJ…","Ctrl+I")) import_obj_model();
+            if (ImGui::MenuItem("Importuj model 3D…","Ctrl+I")) import_model();
             ImGui::MenuItem("Eksport",nullptr,false,false);
             ImGui::Separator();
             if (ImGui::MenuItem("Zapisz scenę","Ctrl+S")) save_scene();
@@ -314,8 +314,8 @@ void scene_window() {
 }
 
 void resources() {
-    if(ImGui::Button("Importuj OBJ…",{-1,34}))import_obj_model();
-    ImGui::SetItemTooltip("Wczytaj model Wavefront OBJ (Ctrl+I)");
+    if(ImGui::Button("Importuj model…",{-1,34}))import_model();
+    ImGui::SetItemTooltip("Wczytaj FBX, glTF/GLB, DAE, STL, PLY, 3DS, OBJ i inne (Ctrl+I)");
     ImGui::Spacing();
     ImGui::TextDisabled("PRYMITYWY / kliknij, aby dodać do sceny");
     const engine::PrimitiveType types[]{engine::PrimitiveType::Cube,engine::PrimitiveType::Sphere,
@@ -406,7 +406,7 @@ void hud_builtin(const std::string& name) {
 void hud_action(const std::string& name) {
     auto& g=app();
     if(name=="scene.save") save_scene();
-    else if(name=="model.import") import_obj_model();
+    else if(name=="model.import") import_model();
     else if(name=="camera.reset") g.orbit={};
     else if(name=="camera.frame") frame_selected();
     else if(name=="tool.move") set_tool(0);
