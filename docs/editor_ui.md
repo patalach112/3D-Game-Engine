@@ -139,7 +139,7 @@ projektanta z niezapisanymi zmianami wymaga zapisu, odrzucenia lub anulowania.
 Przyciski minimalizacji, maksymalizacji i zamknięcia są stałymi kontrolkami
 aplikacji poza dokumentem: nie można ich usunąć ani przypisać innej funkcji.
 
-Plik ma wersjonowany format tekstowy `STUDIO_HUD 1`, stabilne identyfikatory,
+Plik ma wersjonowany format tekstowy `STUDIO_HUD 2` (z odczytem wersji 1), stabilne identyfikatory,
 walidację rodziców/cykli, ograniczenie głębokości do 32 i rozmiaru do 2 MiB.
 Zawiera też stan dokowania. Zapis najpierw tworzy plik tymczasowy, następnie
 atomowo zastępuje poprzedni; błędne dane nie zastępują dobrego projektu.

@@ -17,6 +17,7 @@ ImGuiKey gui_key(int key) {
         ImGuiKey_Space,ImGuiKey_Enter,ImGuiKey_Escape,ImGuiKey_Minus,ImGuiKey_Equal,ImGuiKey_Comma,ImGuiKey_Period,
         ImGuiKey_Slash,ImGuiKey_Semicolon,ImGuiKey_Apostrophe,ImGuiKey_LeftBracket,ImGuiKey_RightBracket,ImGuiKey_Backslash,
         ImGuiKey_GraveAccent,ImGuiKey_KeypadAdd,ImGuiKey_KeypadSubtract,ImGuiKey_KeypadEnter};
+    static_assert(static_cast<int>(Key::KeypadEnter)-256+1==std::size(named));
     if(key>=256&&key<256+static_cast<int>(std::size(named)))return named[key-256];
     return ImGuiKey_None;
 }
@@ -83,6 +84,8 @@ void bindings_tab() {
             while(clipper.Step())for(int row=clipper.DisplayStart;row<clipper.DisplayEnd;++row) {
                 const auto i=static_cast<std::size_t>(row);
                 ImGui::PushID(static_cast<int>(i));ImGui::TableNextRow();ImGui::TableSetColumnIndex(0);
+                const float row_top=ImGui::GetCursorScreenPos().y-ImGui::GetStyle().CellPadding.y;
+                const float row_height=ImGui::GetFrameHeight()+2*ImGui::GetStyle().CellPadding.y;
                 ImGui::TextUnformatted(action_label(list[i].action));
                 if(ImGui::IsItemHovered()&&ImGui::IsMouseClicked(1)){context_row=static_cast<int>(i);context_clicked=true;}
                 ImGui::TableSetColumnIndex(1);
@@ -103,7 +106,7 @@ void bindings_tab() {
                     if(ImGui::IsItemHovered()&&ImGui::IsMouseClicked(1)){context_row=static_cast<int>(i);context_clicked=true;}
                 }
                 // Include blank space in each table row, not only its text/button.
-                if(ImGui::IsMouseClicked(1)&&ImGui::IsWindowHovered()&&ImGui::GetMousePos().y>=ImGui::GetItemRectMin().y&&ImGui::GetMousePos().y<=ImGui::GetItemRectMax().y) {
+                if(ImGui::IsMouseClicked(1)&&ImGui::IsWindowHovered()&&ImGui::GetMousePos().y>=row_top&&ImGui::GetMousePos().y<row_top+row_height) {
                     context_row=static_cast<int>(i);context_clicked=true;
                 }
                 if(g.binding_scroll_last && i+1==list.size()){ImGui::SetScrollHereY(1);g.binding_scroll_last=false;}
@@ -176,8 +179,9 @@ void process_bindings() {
     if(g.hud_designer||g.show_settings||g.binding_capture>=0||g.binding_consumed_frame==ImGui::GetFrameCount())return;
     const auto& io=ImGui::GetIO();
     if(io.WantTextInput||ImGui::IsAnyItemActive()||ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel))return;
+    const auto current_modifiers=modifiers();
     for(const auto& b:g.live_bindings) {
-        if(!b.key||b.action.empty()||modifiers()!=b.modifiers)continue;
+        if(!b.key||b.action.empty()||current_modifiers!=b.modifiers)continue;
         const auto key=gui_key(b.key);
         // Mouse binds must not consume clicks in unrelated editor controls.
         if(b.key>=400 && (!g.viewport_visible||!scene_input_at(static_cast<int>(io.MousePos.x),static_cast<int>(io.MousePos.y))))continue;
@@ -192,9 +196,11 @@ void draw_settings_window() {
     if(!g.bindings_initialized)initialize_bindings();
     if(!g.show_settings){g.binding_capture=-1;return;}
     if(g.focus_settings){ImGui::SetNextWindowFocus();g.focus_settings=false;}
-    ImGui::SetNextWindowSize({720,500},ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos({static_cast<float>(g.width)*.5F,static_cast<float>(g.height)*.5F},ImGuiCond_Appearing,{.5F,.5F});
-    ImGui::SetNextWindowSizeConstraints({std::min(620.0F,static_cast<float>(g.width)),std::min(380.0F,static_cast<float>(g.height))},{static_cast<float>(g.width),static_cast<float>(g.height)});
+    const auto* viewport=ImGui::GetMainViewport();
+    const ImVec2 available{std::max(1.0F,viewport->WorkSize.x),std::max(1.0F,viewport->WorkSize.y)};
+    ImGui::SetNextWindowSize({std::min(720.0F,available.x),std::min(500.0F,available.y)},ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos({viewport->WorkPos.x+available.x*.5F,viewport->WorkPos.y+available.y*.5F},ImGuiCond_Appearing,{.5F,.5F});
+    ImGui::SetNextWindowSizeConstraints({std::min(620.0F,available.x),std::min(380.0F,available.y)},available);
     if(ImGui::Begin("Ustawienia",&g.show_settings,ImGuiWindowFlags_NoDocking|ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_NoSavedSettings)) {
         if(ImGui::BeginTabBar("##SettingsTabs")) {
             if(ImGui::BeginTabItem("Podstawowe",nullptr,g.settings_tab==0?ImGuiTabItemFlags_SetSelected:0)) {
