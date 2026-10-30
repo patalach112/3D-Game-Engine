@@ -76,8 +76,8 @@ jobs:
           Invoke-WebRequest 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.5/mesa3d-26.2.5-release-msvc.7z' -OutFile mesa.7z
           & 7z x mesa.7z '-odeps/mesa' -y | Out-Null
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # Lavapipe's Windows build lacks VK_KHR_win32_surface. Dozen on
-          # Windows WARP exercises the real Vulkan swapchain without a GPU.
+          # Dozen on Windows WARP exercises the real Vulkan swapchain without
+          # depending on a physical GPU in the hosted runner.
           $icd = Get-ChildItem deps/mesa -Recurse -Filter '*dzn*.json' | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
           if (!$icd) { throw 'Dozen x64 ICD not found' }
           $driver = Get-ChildItem $icd.DirectoryName -Filter '*vulkan_dzn.dll' | Select-Object -First 1
@@ -87,6 +87,12 @@ jobs:
           $manifest = Get-Content $icd.FullName -Raw | ConvertFrom-Json
           $manifest.ICD.library_path = $driver.FullName
           $manifest | ConvertTo-Json -Depth 8 | Set-Content $icd.FullName -Encoding utf8
+          # Hosted Windows jobs are elevated: the Vulkan loader deliberately
+          # ignores VK_ICD_FILENAMES/VK_DRIVER_FILES in that security context.
+          # Register this isolated job's ICD using the normal loader mechanism.
+          $registry = 'HKLM:\SOFTWARE\Khronos\Vulkan\Drivers'
+          New-Item -Path $registry -Force | Out-Null
+          New-ItemProperty -Path $registry -Name $icd.FullName -PropertyType DWord -Value 0 -Force | Out-Null
           'VK_LOADER_DEBUG=error,warn' >> $env:GITHUB_ENV
           "VK_ICD_FILENAMES=$($icd.FullName)" >> $env:GITHUB_ENV
           'DZN_DEBUG=warp' >> $env:GITHUB_ENV
