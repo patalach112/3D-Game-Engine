@@ -9,17 +9,36 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: humbletim/install-vulkan-sdk@v1.2
+      # Packaged Vulkan C headers/loader and shader tools only. Every engine,
+      # editor and test C++ source below is compiled by MSVC, not MinGW.
+      - uses: msys2/setup-msys2@v2
         with:
-          version: '1.3.290.0'
-          cache: true
-      - name: Install NASM
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-vulkan-headers
+            mingw-w64-x86_64-vulkan-loader
+            mingw-w64-x86_64-glslang
+            nasm
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Prepare MSVC import library for the Vulkan C ABI
         shell: pwsh
         run: |
-          choco install nasm --yes --no-progress
-          'C:\Program Files\NASM' >> $env:GITHUB_PATH
+          New-Item -ItemType Directory -Force deps | Out-Null
+          git clone --depth 1 --branch v1.3.290 https://github.com/KhronosGroup/Vulkan-Loader deps/vulkan-loader
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          lib.exe /nologo /machine:x64 /def:deps/vulkan-loader/loader/vulkan-1.def /out:deps/vulkan-1.lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          'C:\msys64\mingw64\bin' >> $env:GITHUB_PATH
+          'C:\msys64\usr\bin' >> $env:GITHUB_PATH
       - name: Configure Visual Studio x64
-        run: cmake -S . -B build-msvc -A x64 -DBUILD_TESTING=ON -DENGINE_USE_ASM=ON -DCMAKE_CXX_FLAGS=/WX
+        run: >-
+          cmake -S . -B build-msvc -A x64
+          -DBUILD_TESTING=ON -DENGINE_USE_ASM=ON -DCMAKE_CXX_FLAGS=/WX
+          -DVulkan_INCLUDE_DIR=C:/msys64/mingw64/include
+          -DVulkan_LIBRARY=${{ github.workspace }}/deps/vulkan-1.lib
       - name: Build Release and Debug (C++ flags must not reach NASM)
         run: |
           cmake --build build-msvc --config Release --parallel 2
