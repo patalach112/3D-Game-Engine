@@ -1,4 +1,5 @@
 #include "engine/hud/document.hpp"
+#include "hud_legacy_fixture.hpp"
 #include <cassert>
 #include <fstream>
 #include <iostream>
@@ -22,11 +23,7 @@ int main() {
     assert(save(path,doc,error));Document loaded;assert(load(path,loaded,error));assert(loaded.bindings==doc.bindings);
     // A v1 document migrates basic bindings and removes legacy settings panes.
     auto w=doc.add(Kind::Window,0,"Ustawienia");auto panel=doc.add(Kind::Panel,w,"Ustawienia");doc.find(panel)->builtin="settings";
-    assert(save(path,doc,error));std::ifstream input(path,std::ios::binary);
-    std::string text((std::istreambuf_iterator<char>(input)),{});input.close();
-    text.replace(0,12,"STUDIO_HUD 1");
-    const auto tail=text.rfind("\n"+std::to_string(doc.bindings.size())+"\n");assert(tail!=std::string::npos);text.resize(tail+1);
-    {std::ofstream output(path,std::ios::binary);output<<text;}
+    write_legacy_hud(path,doc,1);
     assert(load(path,loaded,error));assert(loaded.bindings==basic);assert(!loaded.find(w));
     bad=basic;bad.push_back(basic.front());doc.bindings=bad;assert(!save(path,doc,error));
     std::filesystem::remove(path);

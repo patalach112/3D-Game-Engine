@@ -1,5 +1,6 @@
 #include "engine/hud/document.hpp"
 #include "engine/render/grid.hpp"
+#include "hud_legacy_fixture.hpp"
 #include <cassert>
 #include <cmath>
 #include <fstream>
@@ -10,17 +11,6 @@
 #include <atomic>
 
 namespace {
-void legacy_save(const std::filesystem::path& path,const engine::hud::Document& doc,int version) {
-    std::ofstream f(path);f<<std::setprecision(9)<<"STUDIO_HUD "<<version<<'\n'
-        <<doc.next_id<<' '<<doc.window_minimum.x<<' '<<doc.window_minimum.y<<' '<<doc.default_rounding<<' '<<doc.nodes.size()<<'\n';
-    for(const auto& n:doc.nodes)f<<n.id<<' '<<n.parent<<' '<<static_cast<int>(n.kind)<<' '<<static_cast<int>(n.dock)<<' '
-        <<n.visible<<' '<<n.enabled<<' '<<n.rounded<<' '<<n.shared_rounding<<' '<<n.rounding<<' '
-        <<n.minimum.x<<' '<<n.minimum.y<<' '<<n.gap.x<<' '<<n.gap.y<<' '<<n.padding.x<<' '<<n.padding.y<<' '<<n.button_minimum.x<<' '<<n.button_minimum.y<<' '
-        <<n.rect.x<<' '<<n.rect.y<<' '<<n.rect.w<<' '<<n.rect.h<<' '
-        <<std::quoted(n.text)<<' '<<std::quoted(n.action)<<' '<<std::quoted(n.builtin)<<' '<<std::quoted(n.value)<<'\n';
-    f<<std::quoted(doc.docking)<<'\n';
-    if(version>=2) {f<<doc.bindings.size()<<'\n';for(const auto& b:doc.bindings)f<<std::quoted(b.action)<<' '<<b.key<<' '<<b.modifiers<<'\n';}
-}
 void benchmark() {
     using namespace engine::hud;
     Document doc;Node root;root.id=1;doc.nodes.push_back(root);
@@ -83,7 +73,7 @@ int main(int argc,char**) {
     invalid=d;invalid.palette[ColorRole::Text][0]=std::numeric_limits<float>::quiet_NaN();assert(!save(path,invalid,error));
     assert(load(path,read,error) && read.palette==d.palette);
     for(int version:{1,2}) {
-        legacy_save(path,d,version);assert(load(path,read,error));
+        write_legacy_hud(path,d,version);assert(load(path,read,error));
         assert(!read.custom_colors && !read.find(panel)->custom_colors);
         assert(read.find(input)->value==d.find(input)->value && read.docking==d.docking);
         assert(read.bindings==(version==1?basic_bindings():d.bindings));
