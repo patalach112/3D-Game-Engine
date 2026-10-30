@@ -46,10 +46,11 @@ void Document::erase(Id id) {
 std::string window_name(const Node& n) { return n.text+"###HUD_Window_"+std::to_string(n.id); }
 bool Document::validate(std::string& error) const {
     const auto fail=[&](const char* e){error=e;return false;};
+    if(!validate_bindings(bindings,error))return false;
     const auto scalar=[](float x,float lo,float hi){return std::isfinite(x)&&x>=lo&&x<=hi;};
     const auto size=[&](Size s,float lo,float hi){return scalar(s.x,lo,hi)&&scalar(s.y,lo,hi);};
     if(nodes.empty()||nodes.size()>4096||!size(window_minimum,300,8192)||!scalar(default_rounding,0,256)||docking.size()>1048576) return fail("Nieprawidłowe ustawienia HUD-u");
-    std::size_t budget=docking.size()*2;
+    std::size_t budget=docking.size()*2+bindings.size()*128;
     std::set<Id> ids; Id maximum{}; int bars=0, scenes=0, footers=0;
     for(const auto& n:nodes) {
         if(!n.id || !ids.insert(n.id).second) return fail("Powtórzony identyfikator");
@@ -100,7 +101,7 @@ Document defaults() {
     window("Zasoby","resources",Dock::Bottom,{.19F,.7F,.59F,.3F});
     window("Notatki","notes",Dock::Bottom,{.19F,.7F,.59F,.3F});
     window("Renderer","renderer",Dock::Bottom,{.19F,.7F,.59F,.3F});
-    window("Ustawienia","settings",Dock::Bottom,{.19F,.7F,.59F,.3F},false);
+
     const auto footer=d.add(Kind::Footer,0,"{status} | {objects} obiektów | {fps} FPS | {limit}");
     d.find(footer)->minimum={1,28};
     return d;
@@ -110,7 +111,7 @@ bool load(const std::filesystem::path& path,Document& out,std::string& error) {
         std::error_code ec;const auto bytes=std::filesystem::file_size(path,ec);
         if(ec||bytes>2097152) {error="Brak pliku lub plik HUD jest zbyt duży";return false;}
         std::ifstream f(path,std::ios::binary); Document d;std::string magic;int version{};std::size_t count{};
-        if(!(f>>magic>>version)||magic!="STUDIO_HUD"||version!=1) {error="Nieznany format HUD";return false;}
+        if(!(f>>magic>>version)||magic!="STUDIO_HUD"||(version!=1&&version!=2)) {error="Nieznany format HUD";return false;}
         if(!(f>>d.next_id>>d.window_minimum.x>>d.window_minimum.y>>d.default_rounding>>count)||count>4096) {error="Uszkodzony nagłówek HUD";return false;}
         for(std::size_t i=0;i<count;++i) {
             Node n;int kind{},dock{};
@@ -120,6 +121,21 @@ bool load(const std::filesystem::path& path,Document& out,std::string& error) {
             n.kind=static_cast<Kind>(kind);n.dock=static_cast<Dock>(dock);d.nodes.push_back(n);
         }
         if(!(f>>std::quoted(d.docking))) {error="Brak układu dokowania";return false;}
+        if(version==2) {
+            std::size_t total{};if(!(f>>total)||total>512){error="Błędna liczba bindów";return false;}
+            d.bindings.clear();
+            for(std::size_t i=0;i<total;++i){Binding b;if(!(f>>std::quoted(b.action)>>b.key>>b.modifiers)){error="Uszkodzony bind HUD";return false;}d.bindings.push_back(b);}
+        }
+        if(!d.validate(error))return false;
+        // Settings is application chrome now, never a deletable/dockable HUD node.
+        std::vector<Id> legacy;
+        for(auto& n:d.nodes)if(n.builtin=="settings"){n.builtin.clear();legacy.push_back(n.id);}
+        for(auto id:legacy) {
+            const auto* n=d.find(id);const auto parent=n?n->parent:0;
+            const auto children=[&](Id p){return std::any_of(d.nodes.begin(),d.nodes.end(),[&](const Node& c){return c.parent==p;});};
+            if(!children(id))d.erase(id);
+            if(parent&&!children(parent))d.erase(parent);
+        }
         f>>std::ws;if(!f.eof()) {error="Dodatkowe dane po dokumencie";return false;}
         if(!d.validate(error)) return false;
         out=std::move(d);return true;
@@ -130,13 +146,15 @@ bool save(const std::filesystem::path& path,const Document& doc,std::string& err
     auto temp=path;temp+=".tmp";
     try {
         std::ofstream f(temp,std::ios::binary|std::ios::trunc);
-        f<<"STUDIO_HUD 1\n"<<doc.next_id<<' '<<doc.window_minimum.x<<' '<<doc.window_minimum.y<<' '<<doc.default_rounding<<' '<<doc.nodes.size()<<'\n'<<std::setprecision(9);
+        f<<"STUDIO_HUD 2\n"<<doc.next_id<<' '<<doc.window_minimum.x<<' '<<doc.window_minimum.y<<' '<<doc.default_rounding<<' '<<doc.nodes.size()<<'\n'<<std::setprecision(9);
         for(const auto& n:doc.nodes) f<<n.id<<' '<<n.parent<<' '<<static_cast<int>(n.kind)<<' '<<static_cast<int>(n.dock)<<' '
             <<n.visible<<' '<<n.enabled<<' '<<n.rounded<<' '<<n.shared_rounding<<' '<<n.rounding<<' '
             <<n.minimum.x<<' '<<n.minimum.y<<' '<<n.gap.x<<' '<<n.gap.y<<' '<<n.padding.x<<' '<<n.padding.y<<' '<<n.button_minimum.x<<' '<<n.button_minimum.y<<' '
             <<n.rect.x<<' '<<n.rect.y<<' '<<n.rect.w<<' '<<n.rect.h<<' '
             <<std::quoted(n.text)<<' '<<std::quoted(n.action)<<' '<<std::quoted(n.builtin)<<' '<<std::quoted(n.value)<<'\n';
-        f<<std::quoted(doc.docking)<<'\n';f.flush();if(!f) {error="Nie można zapisać HUD";return false;}f.close();if(!f) {error="Błąd zamknięcia pliku HUD";return false;}
+        f<<std::quoted(doc.docking)<<'\n'<<doc.bindings.size()<<'\n';
+        for(const auto& b:doc.bindings)f<<std::quoted(b.action)<<' '<<b.key<<' '<<b.modifiers<<'\n';
+        f.flush();if(!f) {error="Nie można zapisać HUD";return false;}f.close();if(!f) {error="Błąd zamknięcia pliku HUD";return false;}
 #ifdef _WIN32
         if(!MoveFileExW(temp.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) {error="Nie można zastąpić pliku HUD";return false;}
 #else

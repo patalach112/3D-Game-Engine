@@ -7,7 +7,7 @@ namespace editor {
 namespace {
 bool over_scene(HWND hwnd,LPARAM lp) {
     POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};
-    return app().ready && !app().hud_designer && scene_input_at(p.x,p.y)
+    return app().ready && !app().hud_designer && !app().show_settings && scene_input_at(p.x,p.y)
         && !ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel)
         && GetActiveWindow()==hwnd;
 }

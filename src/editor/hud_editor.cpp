@@ -1,5 +1,6 @@
 #include "editor_app.hpp"
 #include "hud_editor.hpp"
+#include "settings.hpp"
 #include "dock_layout.hpp"
 #include "engine/log.hpp"
 #include <algorithm>
@@ -12,8 +13,6 @@ namespace editor {
 namespace {
 using namespace engine::hud;
 constexpr float title_height=40;
-constexpr const char* actions[]{"","scene.save","settings","camera.reset","camera.frame","tool.move","tool.rotate","tool.scale",
-    "object.cube","object.sphere","object.cylinder","object.plane","object.circle","object.square","layout.reset","app.close"};
 struct Deferred { Kind kind{Kind::Panel};Id parent{},erase{};bool add{}; } pending;
 ImVec2 last_canvas{};
 int hit_priority{};
@@ -55,7 +54,7 @@ void button_properties(Node& n) {
         if(ImGui::Checkbox("Wysuwana lista",&submenu)) {n.kind=submenu?Kind::List:Kind::Button;app().hud_dirty=true;}
         ImGui::EndDisabled();
         if(ImGui::BeginCombo("Funkcja",n.action.empty()?"Brak":n.action.c_str())) {
-            for(auto action:actions) if(ImGui::Selectable(*action?action:"Brak",n.action==action)) {n.action=action;app().hud_dirty=true;}
+            for(auto action:engine::hud::actions()) if(ImGui::Selectable(action.label,n.action==action.id)) {n.action=action.id;app().hud_dirty=true;}
             ImGui::EndCombo();
         }
         if(n.kind==Kind::List && ImGui::Button("Dodaj pozycję listy"))pending={Kind::Button,n.id,0,true};
@@ -82,6 +81,7 @@ void item_hit(const Node& n,Id panel,Id window) {
 bool design() {return app().hud_designer && !app().hud_preview;}
 void execute(const Node& n) {
     auto& g=app();
+    if(n.action=="settings" || n.action=="settings.bindings" || n.action=="settings.graphics"){hud_action(n.action);return;}
     if(design()) g.hud_selected=n.id;
     else if(n.enabled) hud_action(n.action);
 }
@@ -327,6 +327,7 @@ void inspector(float top,float height) {
 }
 void context_menu(ImVec2 canvas) {
     auto& g=app();
+    if(g.settings_hovered)return;
     if(ImGui::IsMouseClicked(ImGuiMouseButton_Left) && g.hud_hit && !g.hud_preview)g.hud_selected=g.hud_hit;
     if(ImGui::IsMouseClicked(ImGuiMouseButton_Right) && (g.hud_hit || ImGui::IsMouseHoveringRect({0,74},{canvas.x,74+canvas.y}))) {
         g.hud_context=g.hud_hit;g.hud_context_panel=g.hud_hit_panel;g.hud_context_window=g.hud_hit_window;
@@ -365,6 +366,7 @@ void reload_project() {
         if(load(g.hud_path,candidate,error)) {g.hud=std::move(candidate);g.hud_inputs.clear();g.hud_dirty=false;g.hud_selected=0;g.hud_reset=true;
             if(!g.hud.docking.empty()) {ImGui::LoadIniSettingsFromMemory(g.hud.docking.c_str());g.hud_reset=false;}}
         else g.hud_message=error;
+        initialize_bindings();
 }
 void toolbar() {
     auto& g=app();
@@ -380,12 +382,13 @@ void toolbar() {
         ImGui::SameLine();if(ImGui::Button("Anuluj"))ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
-    ImGui::SameLine();change(ImGui::Checkbox("Interaktywny podgląd",&g.hud_preview));
+    ImGui::SameLine();if(ImGui::Button("Ustawienia"))hud_action("settings");
+    ImGui::SameLine();ImGui::Checkbox("Interaktywny podgląd",&g.hud_preview);
     ImGui::SameLine();ImGui::Checkbox("Właściwości",&g.hud_inspector);
     ImGui::SameLine();if(ImGui::Button("Domyślny HUD"))ImGui::OpenPopup("Przywrócić HUD?");
     if(ImGui::BeginPopup("Przywrócić HUD?")) {
         ImGui::TextUnformatted("Bieżący projekt zostanie zastąpiony (plik pozostaje bez zmian).");
-        if(ImGui::Button("Przywróć")) {g.hud=defaults();g.hud_inputs.clear();g.hud_selected=0;g.hud_reset=true;g.hud_dirty=true;ImGui::CloseCurrentPopup();}
+        if(ImGui::Button("Przywróć")) {g.hud=defaults();g.hud_inputs.clear();g.hud_selected=0;g.hud_reset=true;g.hud_dirty=true;initialize_bindings();ImGui::CloseCurrentPopup();}
         ImGui::EndPopup();
     }
     ImGui::End();
@@ -446,6 +449,7 @@ void initialize_hud() {
         if(std::filesystem::exists(g.hud_path,ec)) {g.hud_message="Nie wczytano HUD: "+error;LOG_WARN("hud","%s",g.hud_message.c_str());}
     }
     g.hud_loaded=true;
+    initialize_bindings();
 }
 bool save_hud() {
     auto& g=app();g.hud.docking=ImGui::SaveIniSettingsToMemory();std::string error;
@@ -463,6 +467,7 @@ void draw_document_ui() {
     if(g.hud_designer) {toolbar();if(g.hud_inspector)inspector(top,height);}
     windows({0,top},{width,height});g.docking_initialized=true;
     footer();
+    draw_settings_window();
     if(g.hud_designer) {
         context_menu({width,height});
         if(pending.erase) {g.hud.erase(pending.erase);g.hud_inputs.clear();g.hud_selected=0;g.hud_dirty=true;}
@@ -479,7 +484,7 @@ void draw_document_ui() {
             }
         }
         pending={};
-        if(ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S,false))g.hud_save_requested=true;
+        if(!g.show_settings && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S,false))g.hud_save_requested=true;
         if(g.hud_save_requested){save_hud();g.hud_save_requested=false;}
         confirm_close();
     } else editor_shortcuts();

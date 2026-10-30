@@ -62,7 +62,7 @@ jobs:
         shell: pwsh
         run: |
           foreach ($config in 'Release', 'Debug') {
-            ctest --test-dir build-msvc -C $config -R '^(platform_tests|geometry_tests|hud_tests|editor_state_tests|input_tests|render_worker_tests|camera_smoothing_tests|log_tests|docking_tests)$' --output-on-failure --no-tests=error
+            ctest --test-dir build-msvc -C $config -R '^(platform_tests|geometry_tests|geometry_cache_tests|bindings_tests|hud_tests|editor_state_tests|input_tests|render_worker_tests|camera_smoothing_tests|log_tests|docking_tests)$' --output-on-failure --no-tests=error
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
       - name: Package Release

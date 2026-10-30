@@ -71,6 +71,7 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
         if (!finite(t.position)||!finite(t.rotation)||!finite(t.scale)) continue;
         const bool uniform=t.scale.x==t.scale.y&&t.scale.y==t.scale.z;
         const auto type=static_cast<std::size_t>(entity.primitive);
+        if(type>=cached.size())throw std::invalid_argument("Unknown primitive");
         const auto& mesh=primitive_mesh(entity.primitive);
         MeshId id{};
         if (uniform&&has_mesh[type]) id=cached[type];
@@ -78,12 +79,31 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
             std::vector<engine::Vertex> vertices;
             std::vector<std::uint32_t> indices;
             const auto local=[&](Vec3 p) { return uniform?p:Vec3{p.x*t.scale.x,p.y*t.scale.y,p.z*t.scale.z}; };
+            if(uniform) {
+                struct FlatMesh {std::vector<engine::Vertex> vertices;std::vector<std::uint32_t> indices;};
+                static const auto templates=[] {
+                    std::array<FlatMesh,6> result;
+                    for(std::size_t i=0;i<result.size();++i) {
+                        const auto& source=primitive_mesh(static_cast<PrimitiveType>(i));auto& flat=result[i];
+                        flat.vertices.reserve(source.triangles.size()*3);flat.indices.reserve(source.triangles.size()*3);
+                        for(const auto& tri:source.triangles) {
+                            const auto a=source.vertices[tri[0]],b=source.vertices[tri[1]],c=source.vertices[tri[2]];
+                            const auto normal=normalize(cross(subtract(b,a),subtract(c,a)));
+                            for(auto p:{a,b,c}){flat.indices.push_back(static_cast<std::uint32_t>(flat.vertices.size()));flat.vertices.push_back(make_vertex(p,normal));}
+                        }
+                    }
+                    return result;
+                }();
+                id=builder.add_mesh(templates[type].vertices,templates[type].indices);
+            } else {
+            vertices.reserve(mesh.triangles.size()*3);indices.reserve(mesh.triangles.size()*3);
             for (const auto& triangle:mesh.triangles) {
                 const auto a=local(mesh.vertices[triangle[0]]),b=local(mesh.vertices[triangle[1]]),c=local(mesh.vertices[triangle[2]]);
                 const auto normal=normalize(cross(subtract(b,a),subtract(c,a)));
                 for (auto p:{a,b,c}) { indices.push_back(static_cast<std::uint32_t>(vertices.size())); vertices.push_back(make_vertex(p,normal)); }
             }
             id=builder.add_mesh(vertices,indices);
+            }
             if (uniform) { cached[type]=id; has_mesh[type]=true; }
         }
         ObjectData object;
@@ -174,6 +194,24 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
         frame.vertices.insert(frame.vertices.end(),batch->begin(),batch->end());
     frame.geometry=builder.build();
     return frame;
+}
+const FrameGeometry& FrameGeometryCache::update(const Scene& scene,const EditorCamera& view,EntityId selection,
+    int w,int h,bool show_grid,int gizmo) {
+    const auto same=[](Vec3 a,Vec3 b){return a.x==b.x&&a.y==b.y&&a.z==b.z;};
+    bool match=valid && selected==selection && width==w && height==h && grid==show_grid && mode==gizmo &&
+        same(camera.position,view.position)&&same(camera.target,view.target)&&camera.vertical_fov_degrees==view.vertical_fov_degrees &&
+        entities.size()==scene.entity_count();
+    if(match)for(std::size_t i=0;i<entities.size();++i) {
+        const auto& a=entities[i];const auto& b=scene.entities()[i];
+        if(a.id!=b.id||a.primitive!=b.primitive||!same(a.transform.position,b.transform.position)||
+            !same(a.transform.rotation,b.transform.rotation)||!same(a.transform.scale,b.transform.scale)){match=false;break;}
+    }
+    if(match){++hits;return frame;}
+    auto replacement=scene_geometry(scene,view,selection,w,h,show_grid,gizmo);
+    std::vector<GeometryEntityKey> keys;keys.reserve(scene.entity_count());
+    for(const auto& e:scene.entities())keys.push_back({e.id,e.primitive,e.transform});
+    frame=std::move(replacement);entities=std::move(keys);camera=view;selected=selection;
+    width=w;height=h;grid=show_grid;mode=gizmo;valid=true;++builds;return frame;
 }
 } // namespace internal
 } // namespace engine

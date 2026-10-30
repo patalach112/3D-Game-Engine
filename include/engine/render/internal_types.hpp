@@ -66,6 +66,21 @@ struct FrameGeometry {
     std::uint32_t lines{}, overlay_lines{}, overlay_triangles{};
 };
 
+// Cache renderer inputs, not Scene identity: transforms can be edited through
+// public Entity references. A scene revision counter alone would miss edits.
+struct GeometryEntityKey { EntityId id; PrimitiveType primitive; Transform transform; };
+struct FrameGeometryCache {
+    std::vector<GeometryEntityKey> entities;
+    EditorCamera camera;
+    EntityId selected{};
+    int width{},height{},mode{};
+    bool grid{},valid{};
+    FrameGeometry frame;
+    std::uint64_t builds{},hits{};
+    ENGINE_API const FrameGeometry& update(const Scene& scene,const EditorCamera& view,EntityId selection,
+        int w,int h,bool show_grid,int gizmo);
+};
+
 // --- Declaracje funkcji z podzielonych plików ---
 MeshData make_primitive_mesh(PrimitiveType type);
 const MeshData& primitive_mesh(PrimitiveType type);
