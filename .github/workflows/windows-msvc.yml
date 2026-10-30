@@ -1,0 +1,36 @@
+name: Windows MSVC build
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  msvc:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: '1.3.290.0'
+          cache: true
+      - name: Install NASM
+        shell: pwsh
+        run: |
+          choco install nasm --yes --no-progress
+          'C:\Program Files\NASM' >> $env:GITHUB_PATH
+      - name: Configure Visual Studio x64
+        run: cmake -S . -B build-msvc -A x64 -DBUILD_TESTING=ON -DENGINE_USE_ASM=ON -DCMAKE_CXX_FLAGS=/WX
+      - name: Build Release and Debug (C++ flags must not reach NASM)
+        run: |
+          cmake --build build-msvc --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build-msvc --config Debug --parallel 2
+      - name: Test without a Vulkan GPU
+        shell: pwsh
+        run: |
+          foreach ($config in 'Release', 'Debug') {
+            ctest --test-dir build-msvc -C $config -R '^(platform_tests|geometry_tests|editor_state_tests|input_tests|render_worker_tests|camera_smoothing_tests|log_tests|docking_tests)$' --output-on-failure --no-tests=error
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Package Release
+        run: cmake --build build-msvc --config Release --target package

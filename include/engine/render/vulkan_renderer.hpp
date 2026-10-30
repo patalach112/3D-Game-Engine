@@ -43,59 +43,59 @@ struct Ray3 {
 // Vulkan rasterization, clipping, shading and depth testing. No CPU rasterizer.
 // With a Win32 target, present() copies the GPU image to a Vulkan swapchain.
 // Without a window, render() reads it back as 0x00RRGGBB for tests/PPM/terminal.
-class ENGINE_API VulkanRenderer {
+class VulkanRenderer {
 public:
-    VulkanRenderer();
-    ~VulkanRenderer();
+    ENGINE_API VulkanRenderer();
+    ENGINE_API ~VulkanRenderer();
     VulkanRenderer(const VulkanRenderer&) = delete;
     VulkanRenderer& operator=(const VulkanRenderer&) = delete;
 
 #ifdef _WIN32
     // Call before initialize(). The caller owns both native handles.
-    void set_window(void* hinstance, void* hwnd);
-    void set_external_mouse_capture(bool enabled);
+    ENGINE_API void set_window(void* hinstance, void* hwnd);
+    ENGINE_API void set_external_mouse_capture(bool enabled);
 #endif
     // UI state/backends live in the engine DLL. Native Win32 input is forwarded
     // through handle_ui_message(); headless callers feed ImGuiIO directly.
-    void enable_ui(float font_size = 17.0F);
-    void begin_ui_frame(float delta_seconds = 1.0F / 60.0F);
+    ENGINE_API void enable_ui(float font_size = 17.0F);
+    ENGINE_API void begin_ui_frame(float delta_seconds = 1.0F / 60.0F);
     // Finalize on the UI/window thread before handing exclusive ownership to a
     // render worker. No frontend renderer/ImGui access until that worker finishes.
-    void finish_ui_frame();
+    ENGINE_API void finish_ui_frame();
 #ifdef _WIN32
-    bool handle_ui_message(void* hwnd, unsigned int message,
+    ENGINE_API bool handle_ui_message(void* hwnd, unsigned int message,
                            std::uintptr_t wparam, std::intptr_t lparam);
 #endif
-    [[nodiscard]] unsigned int antialiasing_samples() const noexcept;
+    [[nodiscard]] ENGINE_API unsigned int antialiasing_samples() const noexcept;
     // Lightweight runtime graphics settings. They affect the next render and do
     // not recreate the Vulkan device or swapchain.
-    void set_clear_color(Vec3 color);
+    ENGINE_API void set_clear_color(Vec3 color);
     [[nodiscard]] Vec3 clear_color() const noexcept { return clear_color_; }
     void set_grid_visible(bool visible) noexcept { grid_visible_ = visible; }
     [[nodiscard]] bool grid_visible() const noexcept { return grid_visible_; }
     // 0 = translation arrows, 1 = rotation rings, 2 = scale handles.
     void set_gizmo_mode(int mode) noexcept { gizmo_mode_ = mode >= 0 && mode <= 2 ? mode : 0; }
-    void initialize();
-    void shutdown() noexcept;
-    void resize(int width, int height);
+    ENGINE_API void initialize();
+    ENGINE_API void shutdown() noexcept;
+    ENGINE_API void resize(int width, int height);
     // Win32: records a scene pass; present() submits it together with the blit.
     // Headless: submits and waits for pixel readback before returning.
     // Preserve the original whole-target entry point for existing DLL consumers.
-    void render(const Scene& scene, const EditorCamera& camera, EntityId selected);
-    void render(const Scene& scene, const EditorCamera& camera, EntityId selected,
+    ENGINE_API void render(const Scene& scene, const EditorCamera& camera, EntityId selected);
+    ENGINE_API void render(const Scene& scene, const EditorCamera& camera, EntityId selected,
                 RenderViewport viewport);
     // One packed geometry buffer: HUD vertices, 3D vertices, HUD indices, 3D indices.
     // ObjectData and indirect commands are 3D-only SSBOs; compute updates visibility.
-    void render_geometry(const GeometryBuffer& geometry,const EditorCamera& camera,RenderViewport viewport = {});
+    ENGINE_API void render_geometry(const GeometryBuffer& geometry,const EditorCamera& camera,RenderViewport viewport = {});
     // GPU-produced visibility, available after headless render/readback only.
-    [[nodiscard]] const std::vector<DrawIndexedIndirectCommand>& last_draw_commands() const noexcept;
-    void present();
+    [[nodiscard]] ENGINE_API const std::vector<DrawIndexedIndirectCommand>& last_draw_commands() const noexcept;
+    ENGINE_API void present();
 
     [[nodiscard]] int width() const noexcept { return width_; }
     [[nodiscard]] int height() const noexcept { return height_; }
     // Only populated by headless rendering, not by the Win32 swapchain path.
     [[nodiscard]] const std::vector<std::uint32_t>& pixels() const noexcept { return pixels_; }
-    [[nodiscard]] const std::string& device_name() const noexcept;
+    [[nodiscard]] ENGINE_API const std::string& device_name() const noexcept;
 
 private:
     struct Impl;

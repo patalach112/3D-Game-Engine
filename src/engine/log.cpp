@@ -75,10 +75,10 @@ void log_init(const char* filename) {
 #ifdef _WIN32
     // Windows: otwiera plik log w tryb append.
     if (filename && filename[0]) {
-        g_file = std::fopen(filename, "a");
+        (void)fopen_s(&g_file, filename, "a");
     }
     if (!g_file) {
-        g_file = std::fopen("engine.log", "a");
+        (void)fopen_s(&g_file, "engine.log", "a");
     }
 #else
     // Linux: logowanie do stderr.

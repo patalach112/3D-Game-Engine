@@ -641,8 +641,8 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
         indices.reserve(static_cast<std::size_t>(data->TotalIdxCount));
         for (const auto* list:data->CmdLists) {
             for (const auto& v:list->VtxBuffer) {
-                const auto color=ImGui::ColorConvertU32ToFloat4(v.col);
-                hud.push_back({{v.pos.x,v.pos.y},{color.x,color.y,color.z,color.w}}); uv.push_back({v.uv.x,v.uv.y});
+                const auto tint=ImGui::ColorConvertU32ToFloat4(v.col);
+                hud.push_back({{v.pos.x,v.pos.y},{tint.x,tint.y,tint.z,tint.w}}); uv.push_back({v.uv.x,v.uv.y});
             }
             for (auto index:list->IdxBuffer) indices.push_back(index);
         }

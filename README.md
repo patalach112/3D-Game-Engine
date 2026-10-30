@@ -82,6 +82,26 @@ Wymagane: CMake 3.20+, kompilator C++20, NASM na x86-64, nagłówki/biblioteka V
 
 ### Windows
 
+Projekt używa pliku `CMakeLists.txt` (nie `cmake.txt`). Dla Visual Studio można
+budować z PowerShella, bez ręcznego `mkdir` i przechodzenia do katalogu build:
+
+```powershell
+cmake -S . -B build -A x64
+cmake --build build --config Release --parallel
+.\build\Release\engine_editor.exe
+```
+
+Jeśli jesteś już w `build`, odpowiednikiem jest `cmake ..`, następnie
+`cmake --build . --config Release` i `.\Release\engine_editor.exe`.
+DLL `engine.dll` musi pozostać obok EXE. Nie mieszaj DLL z Debug i EXE z Release
+ani bibliotek zbudowanych różnymi wersjami MSVC/STL. CMake ustawia wspólny CRT
+`/MD` w Release i `/MDd` w Debug oraz UTF-8 dla wszystkich źródeł C++.
+
+Komunikaty konfiguracji o nieznalezieniu `pthread` są normalne na Windows,
+jeśli kończą się `Found Threads: TRUE`. Błędu C2660 z niezgodną sygnaturą
+`scene_geometry` nie naprawia czyszczenie builda — wymaga zgodnych źródeł
+renderera i jego nagłówka.
+
 Zainstaluj Vulkan SDK, NASM (dostępny w PATH) i sterownik GPU z obsługą Vulkan. Uruchom nowy terminal,
 żeby CMake widział `VULKAN_SDK` i narzędzia SDK. Przykład z Visual Studio 2022:
 
