@@ -3,7 +3,8 @@ layout(location=0) in vec4 position;
 layout(location=1) in vec4 packedNormal;
 struct ObjectData { vec3 position; int rotation; float scale; uint texturePair; float radius; uint padding; };
 layout(std430,set=0,binding=0) readonly buffer Objects { ObjectData objects[]; };
-layout(push_constant) uniform Camera { vec4 right; vec4 up; vec4 forward; vec4 eye; vec4 projection; vec4 tint; } camera;
+layout(std430,set=0,binding=2) readonly buffer Tints { vec4 tints[]; };
+layout(push_constant) uniform Camera { vec4 right; vec4 up; vec4 forward; vec4 eye; vec4 projection; } camera;
 layout(location=0) out vec3 vertexColor;
 layout(location=1) out float cameraDepth;
 layout(location=2) flat out float isGrid;
@@ -22,6 +23,6 @@ void main() {
     float n=camera.projection.z,f=camera.projection.w;
     gl_Position=vec4(x*camera.projection.x,-y*camera.projection.y,f/(f-n)*z-f*n/(f-n),z);
     vec3 normal=normalize(rotate_xyz(packedNormal.xyz*2.0-1.0,uint(object.rotation)));
-    vertexColor=camera.tint.rgb*(0.48+0.52*abs(dot(normal,normalize(vec3(-0.4,0.8,0.55)))));
+    vertexColor=tints[gl_InstanceIndex].rgb*(0.48+0.52*abs(dot(normal,normalize(vec3(-0.4,0.8,0.55)))));
     cameraDepth=z; isGrid=0;
 }

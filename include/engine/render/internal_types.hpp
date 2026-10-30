@@ -62,6 +62,12 @@ static_assert(sizeof(CameraPush) == 80);
 
 struct FrameGeometry {
     std::vector<DebugVertex> vertices;
+    // Camera-relative FP16 conversion, colours and sequential indices are part
+    // of the scene cache too, not rebuilt on every unchanged Vulkan frame.
+    std::vector<Vertex> debug_vertices;
+    std::vector<DebugAttributes> debug_attributes;
+    std::vector<std::uint32_t> debug_indices;
+    float debug_scale{1};
     GeometryBuffer geometry;
     std::uint32_t lines{}, overlay_lines{}, overlay_triangles{};
 };

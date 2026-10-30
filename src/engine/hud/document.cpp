@@ -18,6 +18,36 @@
 namespace engine::hud {
 Node* Document::find(Id id) { for (auto& n:nodes) if(n.id==id) return &n; return nullptr; }
 const Node* Document::find(Id id) const { for (auto& n:nodes) if(n.id==id) return &n; return nullptr; }
+bool HierarchyIndex::update(const Document& doc) {
+    bool match=valid_ && keys_.size()==doc.nodes.size();
+    if(match)for(std::size_t i=0;i<keys_.size();++i)
+        if(keys_[i]!=Key{doc.nodes[i].id,doc.nodes[i].parent}){match=false;break;}
+    if(match){++hits;return false;}
+    std::vector<Key> keys;keys.reserve(doc.nodes.size());
+    std::unordered_map<Id,std::vector<std::size_t>> children;
+    for(std::size_t i=0;i<doc.nodes.size();++i) {
+        const auto& n=doc.nodes[i];keys.push_back({n.id,n.parent});children[n.parent].push_back(i);
+    }
+    keys_=std::move(keys);children_=std::move(children);valid_=true;++builds;return true;
+}
+std::span<const std::size_t> HierarchyIndex::children(Id parent) const noexcept {
+    const auto it=children_.find(parent);
+    return it==children_.end()?std::span<const std::size_t>{}:std::span<const std::size_t>{it->second};
+}
+namespace {
+bool valid_palette(const Palette& palette) {
+    for(const auto& color:palette.colors)for(float value:color)
+        if(!std::isfinite(value)||value<0||value>1)return false;
+    return true;
+}
+bool read_palette(std::istream& in,Palette& palette) {
+    for(auto& color:palette.colors)for(auto& value:color)if(!(in>>value))return false;
+    return true;
+}
+void write_palette(std::ostream& out,const Palette& palette) {
+    for(const auto& color:palette.colors)for(float value:color)out<<' '<<value;
+}
+}
 bool accepts(Kind parent,Kind child) {
     if (child==Kind::Bar || child==Kind::Window || child==Kind::Footer) return false;
     if (parent==Kind::Bar || parent==Kind::List) return child==Kind::Button || child==Kind::List || child==Kind::Text;
@@ -50,12 +80,14 @@ bool Document::validate(std::string& error) const {
     const auto scalar=[](float x,float lo,float hi){return std::isfinite(x)&&x>=lo&&x<=hi;};
     const auto size=[&](Size s,float lo,float hi){return scalar(s.x,lo,hi)&&scalar(s.y,lo,hi);};
     if(nodes.empty()||nodes.size()>4096||!size(window_minimum,300,8192)||!scalar(default_rounding,0,256)||docking.size()>1048576) return fail("Nieprawidłowe ustawienia HUD-u");
-    std::size_t budget=docking.size()*2+bindings.size()*128;
+    if(!valid_palette(palette))return fail("Nieprawidłowa paleta HUD-u");
+    std::size_t budget=1024+docking.size()*2+bindings.size()*128;
     std::set<Id> ids; Id maximum{}; int bars=0, scenes=0, footers=0;
     for(const auto& n:nodes) {
         if(!n.id || !ids.insert(n.id).second) return fail("Powtórzony identyfikator");
-        budget+=512+2*(n.text.size()+n.action.size()+n.builtin.size()+n.value.size());
+        budget+=1024+2*(n.text.size()+n.action.size()+n.builtin.size()+n.value.size());
         if(budget>2097152) return fail("HUD przekracza limit rozmiaru pliku");
+        if(!valid_palette(n.palette))return fail("Nieprawidłowy kolor elementu HUD");
         maximum=std::max(maximum,n.id);
         if(n.kind<Kind::Bar || n.kind>Kind::Footer || n.dock<Dock::Floating || n.dock>Dock::Bottom) return fail("Nieznany typ elementu");
         if(n.kind==Kind::Bar) ++bars;
@@ -111,17 +143,21 @@ bool load(const std::filesystem::path& path,Document& out,std::string& error) {
         std::error_code ec;const auto bytes=std::filesystem::file_size(path,ec);
         if(ec||bytes>2097152) {error="Brak pliku lub plik HUD jest zbyt duży";return false;}
         std::ifstream f(path,std::ios::binary); Document d;std::string magic;int version{};std::size_t count{};
-        if(!(f>>magic>>version)||magic!="STUDIO_HUD"||(version!=1&&version!=2)) {error="Nieznany format HUD";return false;}
+        if(!(f>>magic>>version)||magic!="STUDIO_HUD"||(version<1||version>3)) {error="Nieznany format HUD";return false;}
         if(!(f>>d.next_id>>d.window_minimum.x>>d.window_minimum.y>>d.default_rounding>>count)||count>4096) {error="Uszkodzony nagłówek HUD";return false;}
+        d.custom_colors=false; // Legacy HUDs retain the application's theme.
+        if(version>=3 && (!(f>>d.custom_colors)||!read_palette(f,d.palette))) {error="Uszkodzona paleta HUD";return false;}
+        d.nodes.reserve(count);
         for(std::size_t i=0;i<count;++i) {
             Node n;int kind{},dock{};
             if(!(f>>n.id>>n.parent>>kind>>dock>>n.visible>>n.enabled>>n.rounded>>n.shared_rounding>>n.rounding
                 >>n.minimum.x>>n.minimum.y>>n.gap.x>>n.gap.y>>n.padding.x>>n.padding.y>>n.button_minimum.x>>n.button_minimum.y
                 >>n.rect.x>>n.rect.y>>n.rect.w>>n.rect.h>>std::quoted(n.text)>>std::quoted(n.action)>>std::quoted(n.builtin)>>std::quoted(n.value))) {error="Uszkodzony element HUD";return false;}
+            if(version>=3 && (!(f>>n.custom_colors)||!read_palette(f,n.palette))) {error="Uszkodzony kolor elementu HUD";return false;}
             n.kind=static_cast<Kind>(kind);n.dock=static_cast<Dock>(dock);d.nodes.push_back(n);
         }
         if(!(f>>std::quoted(d.docking))) {error="Brak układu dokowania";return false;}
-        if(version==2) {
+        if(version>=2) {
             std::size_t total{};if(!(f>>total)||total>512){error="Błędna liczba bindów";return false;}
             d.bindings.clear();
             for(std::size_t i=0;i<total;++i){Binding b;if(!(f>>std::quoted(b.action)>>b.key>>b.modifiers)){error="Uszkodzony bind HUD";return false;}d.bindings.push_back(b);}
@@ -146,12 +182,15 @@ bool save(const std::filesystem::path& path,const Document& doc,std::string& err
     auto temp=path;temp+=".tmp";
     try {
         std::ofstream f(temp,std::ios::binary|std::ios::trunc);
-        f<<"STUDIO_HUD 2\n"<<doc.next_id<<' '<<doc.window_minimum.x<<' '<<doc.window_minimum.y<<' '<<doc.default_rounding<<' '<<doc.nodes.size()<<'\n'<<std::setprecision(9);
-        for(const auto& n:doc.nodes) f<<n.id<<' '<<n.parent<<' '<<static_cast<int>(n.kind)<<' '<<static_cast<int>(n.dock)<<' '
+        f<<std::setprecision(9)<<"STUDIO_HUD 3\n"<<doc.next_id<<' '<<doc.window_minimum.x<<' '<<doc.window_minimum.y<<' '<<doc.default_rounding<<' '<<doc.nodes.size()<<'\n'<<std::setprecision(9);
+        f<<doc.custom_colors;write_palette(f,doc.palette);f<<'\n';
+        for(const auto& n:doc.nodes) { f<<n.id<<' '<<n.parent<<' '<<static_cast<int>(n.kind)<<' '<<static_cast<int>(n.dock)<<' '
             <<n.visible<<' '<<n.enabled<<' '<<n.rounded<<' '<<n.shared_rounding<<' '<<n.rounding<<' '
             <<n.minimum.x<<' '<<n.minimum.y<<' '<<n.gap.x<<' '<<n.gap.y<<' '<<n.padding.x<<' '<<n.padding.y<<' '<<n.button_minimum.x<<' '<<n.button_minimum.y<<' '
             <<n.rect.x<<' '<<n.rect.y<<' '<<n.rect.w<<' '<<n.rect.h<<' '
-            <<std::quoted(n.text)<<' '<<std::quoted(n.action)<<' '<<std::quoted(n.builtin)<<' '<<std::quoted(n.value)<<'\n';
+            <<std::quoted(n.text)<<' '<<std::quoted(n.action)<<' '<<std::quoted(n.builtin)<<' '<<std::quoted(n.value)<<' '<<n.custom_colors;
+            write_palette(f,n.palette);f<<'\n';
+        }
         f<<std::quoted(doc.docking)<<'\n'<<doc.bindings.size()<<'\n';
         for(const auto& b:doc.bindings)f<<std::quoted(b.action)<<' '<<b.key<<' '<<b.modifiers<<'\n';
         f.flush();if(!f) {error="Nie można zapisać HUD";return false;}f.close();if(!f) {error="Błąd zamknięcia pliku HUD";return false;}

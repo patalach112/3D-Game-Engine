@@ -20,6 +20,8 @@ struct EditorCamera {
 
 struct RenderStatistics {
     std::uint64_t geometry_builds{},geometry_cache_hits{},descriptor_updates{};
+    std::uint64_t indirect_draw_calls{},indirect_objects{};
+    bool indirect_batching{}; // Optional device feature AND the runtime toggle.
     double geometry_cpu_us{}; // CPU preparation only; NOT GPU frame time.
 };
 
@@ -81,6 +83,8 @@ public:
     [[nodiscard]] bool grid_visible() const noexcept { return grid_visible_; }
     // 0 = translation arrows, 1 = rotation rings, 2 = scale handles.
     void set_gizmo_mode(int mode) noexcept { gizmo_mode_ = mode >= 0 && mode <= 2 ? mode : 0; }
+    // Defaults ON. A correctness/diagnostic fallback, not a device requirement.
+    ENGINE_API void set_indirect_batching(bool enabled);
     ENGINE_API void initialize();
     ENGINE_API void shutdown() noexcept;
     ENGINE_API void resize(int width, int height);

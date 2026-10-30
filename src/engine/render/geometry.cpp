@@ -192,6 +192,26 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
     frame.vertices.reserve(total);
     for (const auto* batch : {&lines,&overlay_lines,&overlay_triangles})
         frame.vertices.insert(frame.vertices.end(),batch->begin(),batch->end());
+    // Prepare once with the cached scene/camera, including the large-coordinate
+    // normalization used by packed FP16 debug geometry. The Vulkan draw path
+    // now consumes these arrays without an extent scan or per-vertex packing.
+    if(!frame.vertices.empty()) {
+        double extent=0;
+        for(const auto& v:frame.vertices)
+            extent=std::max({extent,std::abs(static_cast<double>(v.position.x)-camera.position.x),
+                std::abs(static_cast<double>(v.position.y)-camera.position.y),std::abs(static_cast<double>(v.position.z)-camera.position.z)});
+        frame.debug_scale=static_cast<float>(std::max(1.0,extent/60000.0));
+        frame.debug_vertices.reserve(frame.vertices.size());frame.debug_attributes.reserve(frame.vertices.size());
+        frame.debug_indices.reserve(frame.vertices.size()+2);
+        for(const auto& v:frame.vertices) {
+            const Vec3 p{static_cast<float>((static_cast<double>(v.position.x)-camera.position.x)/frame.debug_scale),
+                static_cast<float>((static_cast<double>(v.position.y)-camera.position.y)/frame.debug_scale),
+                static_cast<float>((static_cast<double>(v.position.z)-camera.position.z)/frame.debug_scale)};
+            frame.debug_vertices.push_back(make_vertex(p,{0,0,1}));frame.debug_attributes.push_back({v.color,v.grid});
+            frame.debug_indices.push_back(static_cast<std::uint32_t>(frame.debug_indices.size()));
+        }
+        while(frame.debug_indices.size()%3)frame.debug_indices.push_back(0);
+    }
     frame.geometry=builder.build();
     return frame;
 }

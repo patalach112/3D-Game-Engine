@@ -33,6 +33,15 @@ int main() {
     assert(commands[3].firstIndex==3&&commands[3].vertexOffset==3&&commands[3].firstInstance==3&&commands[3].instanceCount==1);
     assert((pixel(95,44)&0xffff00)!=0 && (pixel(95,44)&255)==0); // Second quad's second triangle.
     assert(pixel(107,48)==0x272729); // A wrong vertexOffset would fetch the larger first triangle here.
+    // Both paths must be pixel-identical, including per-object tint and a
+    // different vertexOffset/firstIndex in the same multi-draw batch.
+    const auto reference=renderer.pixels();const auto first_stats=renderer.statistics();
+    assert(first_stats.indirect_objects==4 && first_stats.indirect_draw_calls<=4);
+    if(first_stats.indirect_batching)assert(first_stats.indirect_draw_calls<4);
+    renderer.set_indirect_batching(false);renderer.render_geometry(geometry,camera);
+    assert(renderer.pixels()==reference);
+    assert(renderer.statistics().indirect_draw_calls-first_stats.indirect_draw_calls==4);
+    renderer.set_indirect_batching(true);renderer.render_geometry(geometry,camera);assert(renderer.pixels()==reference);
     renderer.enable_ui(); renderer.begin_ui_frame();
     auto* draw=ImGui::GetForegroundDrawList();
     // >65535 vertices forces ImGui VtxOffset and conversion from local uint16 indices to uint32.

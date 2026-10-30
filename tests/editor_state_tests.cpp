@@ -6,6 +6,7 @@
 #include <iostream>
 #include "dock_layout.hpp"
 #include "hud_editor.hpp"
+#include "hud_style.hpp"
 #include "settings.hpp"
 #include "engine/gizmo.hpp"
 
@@ -178,7 +179,16 @@ int main() {
     hud_io.Fonts->AddFontDefault();hud_io.Fonts->Build();
     g.hud=engine::hud::defaults();g.hud_loaded=true;
     const auto hud_frame=[&]{ImGui::NewFrame();editor::draw_ui();ImGui::Render();};
+    const auto original_text_color=ImGui::GetStyleColorVec4(ImGuiCol_Text);
+    {
+        engine::hud::Palette palette;palette[engine::hud::ColorRole::Text]={1,0,0,1};
+        editor::HudColors scope(palette);assert(ImGui::GetStyleColorVec4(ImGuiCol_Text).x==1);
+        {palette[engine::hud::ColorRole::Text]={0,1,0,1};editor::HudColors child(palette);assert(ImGui::GetStyleColorVec4(ImGuiCol_Text).y==1);}
+        assert(ImGui::GetStyleColorVec4(ImGuiCol_Text).x==1);
+    }
+    assert(ImGui::GetStyleColorVec4(ImGuiCol_Text).x==original_text_color.x);
     for(int i=0;i<6;++i)hud_frame();
+    assert(GImGui->ColorStack.empty());
     assert(g.viewport_visible && g.scene_drawlist);
     auto hud_view=editor::view_rect();
     assert(editor::scene_input_at((hud_view.left+hud_view.right)/2,(hud_view.top+hud_view.bottom)/2));
@@ -203,6 +213,13 @@ int main() {
     g.hud.add(engine::hud::Kind::Button,nested,"Action");
     for(int i=0;i<3;++i)hud_frame();
     assert(ImGui::FindWindowByName(engine::hud::window_name(*g.hud.find(custom)).c_str()));
+    auto* coloured=g.hud.find(custom);coloured->custom_colors=true;
+    coloured->palette[engine::hud::ColorRole::Background]={.8F,.1F,.7F,1};hud_frame();hud_frame();
+    const auto* coloured_window=ImGui::FindWindowByName(engine::hud::window_name(*g.hud.find(custom)).c_str());
+    const auto expected=ImGui::ColorConvertFloat4ToU32({.8F,.1F,.7F,1});bool found_colour=false;
+    for(const auto& vertex:coloured_window->DrawList->VtxBuffer)if(vertex.col==expected)found_colour=true;
+    assert(found_colour && GImGui->ColorStack.empty());
+    assert(ImGui::GetStyleColorVec4(ImGuiCol_Text).x==original_text_color.x);
     const std::string docking=ImGui::SaveIniSettingsToMemory();assert(!docking.empty());
     // Settings remains reachable in designer mode but is not an editable node.
     const auto node_count=g.hud.nodes.size();editor::hud_action("settings");hud_frame();hud_frame();
