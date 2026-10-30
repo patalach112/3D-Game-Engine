@@ -12,6 +12,7 @@ jobs:
       # Packaged Vulkan C headers/loader and shader tools only. Every engine,
       # editor and test C++ source below is compiled by MSVC, not MinGW.
       - uses: msys2/setup-msys2@v2
+        id: msys2
         with:
           msystem: MINGW64
           update: true
@@ -28,17 +29,17 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force deps/include | Out-Null
           # Do not put the whole MinGW include tree on MSVC's search path.
-          Copy-Item -Recurse C:/msys64/mingw64/include/vulkan deps/include/
-          Copy-Item -Recurse C:/msys64/mingw64/include/vk_video deps/include/
+          Copy-Item -Recurse "${{ steps.msys2.outputs.msys2-location }}/mingw64/include/vulkan" deps/include/
+          Copy-Item -Recurse "${{ steps.msys2.outputs.msys2-location }}/mingw64/include/vk_video" deps/include/
           git clone --depth 1 --branch v1.3.290 https://github.com/KhronosGroup/Vulkan-Loader deps/vulkan-loader
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           lib.exe /nologo /machine:x64 /def:deps/vulkan-loader/loader/vulkan-1.def /out:deps/vulkan-1.lib
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          'C:\msys64\mingw64\bin' >> $env:GITHUB_PATH
+          '${{ steps.msys2.outputs.msys2-location }}/mingw64/bin' >> $env:GITHUB_PATH
       - name: Configure Visual Studio x64
         shell: pwsh
         run: |
-          cmake -S . -B build-msvc -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DENGINE_USE_ASM=ON -DCMAKE_CXX_FLAGS=/WX -DCMAKE_ASM_NASM_COMPILER=C:/msys64/usr/bin/nasm.exe -DVulkan_INCLUDE_DIR=${{ github.workspace }}/deps/include -DVulkan_LIBRARY=${{ github.workspace }}/deps/vulkan-1.lib 2>&1 | Tee-Object -FilePath configure.log
+          cmake -S . -B build-msvc -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DENGINE_USE_ASM=ON -DCMAKE_CXX_FLAGS=/WX "-DCMAKE_ASM_NASM_COMPILER=${{ steps.msys2.outputs.msys2-location }}/usr/bin/nasm.exe" -DVulkan_INCLUDE_DIR=${{ github.workspace }}/deps/include -DVulkan_LIBRARY=${{ github.workspace }}/deps/vulkan-1.lib 2>&1 | Tee-Object -FilePath configure.log
           if ($LASTEXITCODE -ne 0) {
             $code = $LASTEXITCODE
             $details = ((Get-Content configure.log | Select-Object -Last 100) -join '%0A')
