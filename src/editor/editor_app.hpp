@@ -14,6 +14,9 @@
 #include "engine/render/render_worker.hpp"
 #include <chrono>
 #include <deque>
+#include <array>
+#include <unordered_map>
+#include "engine/hud/document.hpp"
 #include <string>
 
 namespace editor {
@@ -26,6 +29,14 @@ struct App {
     engine::EntityId selected{};
     RECT viewport_bounds{};
     bool ready{}, renderer_failed{};
+    engine::hud::Document hud;
+    std::filesystem::path hud_path;
+    bool hud_loaded{}, hud_designer{}, hud_dirty{}, hud_preview{}, hud_save_requested{}, hud_confirm_close{};
+    bool hud_reset{}, hud_inspector{true};
+    engine::hud::Id hud_selected{}, hud_focus{}, hud_hit{}, hud_hit_panel{}, hud_hit_window{};
+    engine::hud::Id hud_context{}, hud_context_panel{}, hud_context_window{};
+    std::string hud_message, scene_window_name;
+    std::unordered_map<engine::hud::Id,std::array<char,4097>> hud_inputs;
     int width{1280}, height{800};
     int left_width{250}, right_width{320}, bottom_height{180};
     engine::OrbitState orbit, displayed_orbit;

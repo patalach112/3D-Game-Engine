@@ -68,7 +68,8 @@ na poprzedni rasteryzator CPU. `pixels()` nie jest zapełniane w trybie swapchai
 
 Edytor Windows używa Dear ImGui **1.91.9b-docking**, renderowanego przez Vulkan.
 Panele można dokować, odpinać, skalować i łączyć w zakładki wewnątrz głównego
-okna; układ zapisuje się w `editor_layout.ini`. Konsola na dole ma poziomy
+okna; projektant `editor_hud.exe` zapisuje pełny HUD w `editor_hud.layout` obok EXE,
+a `engine_editor.exe` wczytuje go przy starcie. Konsola na dole ma poziomy
 DEBUG/INFO/WARN/ERROR, filtr, kopiowanie, czyszczenie i komendy (`help`).
 Menu **Plik** zawiera nieaktywne Import/Eksport oraz Ustawienia, **Narzędzia**
 przełącza ruch/obrót/skalę gizma, a **Dodaj** ma podmenu otwierane po najechaniu:
@@ -88,8 +89,16 @@ budować z PowerShella, bez ręcznego `mkdir` i przechodzenia do katalogu build:
 ```powershell
 cmake -S . -B build
 cmake --build build --config Release --parallel
-.\build\Release\engine_editor.exe
+.\build\Release\editor_hud.exe    # projektowanie, Ctrl+S zapisuje HUD
+.\build\Release\engine_editor.exe # uruchomienie z zapisanym HUD-em
 ```
+
+Domyślny build nie kompiluje testów. W dotychczasowym buildzie z testami ON
+wyłącz je przez `cmake -S . -B build -DBUILD_TESTING=OFF`. Deweloperskie testy
+pozostają dostępne po jawnym `-DBUILD_TESTING=ON` (tak robi CI).
+Projektant pozwala edytować menu, okna, panele, przyciski, tekst, wpisywarki i
+zagnieżdżone listy, minima, odstępy oraz wspólne/własne zaokrąglenia.
+Minimalizacja/maksymalizacja/zamknięcie pozostają nieedytowalne.
 
 Jeśli jesteś już w `build`, odpowiednikiem jest `cmake ..`, następnie
 `cmake --build . --config Release` i `.\Release\engine_editor.exe`.

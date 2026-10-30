@@ -1,4 +1,5 @@
 #include "editor_app.hpp"
+#include "hud_editor.hpp"
 #include "engine/platform.hpp"
 #include "engine/log.hpp"
 #include <array>
@@ -49,6 +50,10 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
     SetProcessDPIAware();
     Logging logging;
     auto& state=editor::app();
+#ifdef EDITOR_HUD_DESIGNER
+    state.hud_designer=true;
+#endif
+    editor::initialize_hud();
     std::unique_ptr<engine::Window> main_window;
     HWND hwnd{};
     try {
@@ -57,7 +62,7 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
         editor::update_camera();
         std::ifstream("project_notes.txt").get(state.notes,sizeof(state.notes),'\0');
         engine::WindowConfig config;
-        config.title="Starter 3D | Vulkan Studio";
+        config.title=state.hud_designer?"HUD Designer | Vulkan Studio":"Starter 3D | Vulkan Studio";
         config.width=1440; config.height=900; config.visible=false;
         config.borderless=true;
         config.native_callback=[](const engine::NativeMessage& msg,std::intptr_t& result,void*) {
@@ -74,7 +79,8 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR,int show) {
         auto& io=ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
         io.ConfigWindowsMoveFromTitleBarOnly=true;
-        io.IniFilename="editor_layout.ini";
+        io.IniFilename=nullptr;
+        if (!state.hud.docking.empty()) ImGui::LoadIniSettingsFromMemory(state.hud.docking.c_str());
         // One Vulkan target and one context: do not enable platform viewports.
         LOG_INFO("editor", "Vulkan Studio: docking, console and custom title bar ready");
         state.renderer.set_external_mouse_capture(true);

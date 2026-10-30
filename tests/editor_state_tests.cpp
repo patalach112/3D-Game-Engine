@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iostream>
 #include "dock_layout.hpp"
+#include "hud_editor.hpp"
 #include "engine/gizmo.hpp"
 
 namespace {
@@ -164,5 +165,41 @@ int main() {
     g.show_settings=true; g.focus_settings=true; ui_frame(); ui_frame();
     assert(ImGui::FindWindowByName(editor::layout::settings)->DockTabIsVisible);
     ImGui::DestroyContext();
+    // Same document drives engine_editor and editor_hud; native controls are
+    // deliberately not document nodes. Exercise both modes without a GPU.
+    ImGui::CreateContext();
+    auto& hud_io=ImGui::GetIO();
+    hud_io.IniFilename=nullptr;hud_io.ConfigFlags|=ImGuiConfigFlags_DockingEnable;
+    hud_io.DisplaySize={static_cast<float>(g.width),static_cast<float>(g.height)};
+    hud_io.Fonts->AddFontDefault();hud_io.Fonts->Build();
+    g.hud=engine::hud::defaults();g.hud_loaded=true;
+    const auto hud_frame=[&]{ImGui::NewFrame();editor::draw_ui();ImGui::Render();};
+    for(int i=0;i<6;++i)hud_frame();
+    assert(g.viewport_visible && g.scene_drawlist);
+    auto hud_view=editor::view_rect();
+    assert(editor::scene_input_at((hud_view.left+hud_view.right)/2,(hud_view.top+hud_view.bottom)/2));
+    engine::hud::Id scene_window{},scene_panel{};
+    for(const auto& n:g.hud.nodes)if(n.builtin=="scene"){scene_window=n.parent;scene_panel=n.id;}
+    assert(scene_window && scene_panel);
+    g.hud.find(scene_window)->visible=false;hud_frame();assert(!g.viewport_visible);
+    g.hud.find(scene_window)->visible=true;hud_frame();hud_frame();assert(g.viewport_visible);
+    g.hud_designer=true;
+    for(int i=0;i<4;++i)hud_frame();
+    assert(ImGui::FindWindowByName("HUD / Właściwości") && g.viewport_visible);
+    // Select via a real preview hit, rather than only the model tree.
+    hud_view=editor::view_rect();hud_io.AddMousePosEvent(static_cast<float>((hud_view.left+hud_view.right)/2),static_cast<float>((hud_view.top+hud_view.bottom)/2));
+    hud_frame();hud_io.AddMouseButtonEvent(0,true);hud_frame();hud_io.AddMouseButtonEvent(0,false);hud_frame();
+    assert(g.hud_selected==scene_panel);
+    g.hud.find(scene_panel)->shared_rounding=false;g.hud.find(scene_panel)->rounding=23;
+    g.hud.default_rounding=17;hud_frame();
+    const auto custom=g.hud.add(engine::hud::Kind::Window,0,"Custom");
+    auto panel=g.hud.add(engine::hud::Kind::Panel,custom,"Panel");
+    auto list=g.hud.add(engine::hud::Kind::List,panel,"List");
+    auto nested=g.hud.add(engine::hud::Kind::List,list,"Nested");
+    g.hud.add(engine::hud::Kind::Button,nested,"Action");
+    for(int i=0;i<3;++i)hud_frame();
+    assert(ImGui::FindWindowByName(engine::hud::window_name(*g.hud.find(custom)).c_str()));
+    const std::string docking=ImGui::SaveIniSettingsToMemory();assert(!docking.empty());
+    ImGui::DestroyContext();g.hud_loaded=false;g.hud_designer=false;
     std::cout << "Editor state, flat picking, docked UI and console passed (no GPU)\n";
 }

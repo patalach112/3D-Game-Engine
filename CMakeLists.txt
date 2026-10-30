@@ -98,6 +98,7 @@ add_library(engine_core SHARED
     src/engine/render/mesh_builder.cpp
     src/engine/render/geometry.cpp
     src/engine/log.cpp
+    src/engine/hud/document.cpp
     src/engine/ui/third_party/imgui/imgui.cpp
     src/engine/ui/third_party/imgui/imgui_draw.cpp
     src/engine/ui/third_party/imgui/imgui_tables.cpp
@@ -148,26 +149,25 @@ else()
 endif()
 
 if(WIN32)
-    add_executable(engine_editor WIN32
-        src/editor/main.cpp
-        src/editor/app.cpp
-        src/editor/ui.cpp
-        src/editor/render.cpp
-        src/editor/scene_io.cpp
-        src/editor/interaction.cpp
-        src/editor/gizmo.cpp
-        src/editor/window.cpp
-    )
-    target_link_libraries(engine_editor PRIVATE engine_core user32)
-    target_compile_definitions(engine_editor PRIVATE UNICODE _UNICODE)
-    if(MINGW)
-        # MinGW needs this option to use the Unicode wWinMain entry point.
-        target_link_options(engine_editor PRIVATE -municode)
-    endif()
+    set(EDITOR_FRONTEND_SOURCES
+        src/editor/app.cpp src/editor/ui.cpp src/editor/render.cpp
+        src/editor/scene_io.cpp src/editor/interaction.cpp src/editor/gizmo.cpp
+        src/editor/window.cpp src/editor/hud_editor.cpp)
+    add_library(editor_frontend STATIC ${EDITOR_FRONTEND_SOURCES})
+    target_link_libraries(editor_frontend PUBLIC engine_core user32)
+    target_compile_definitions(editor_frontend PUBLIC UNICODE _UNICODE)
+    foreach(APP IN ITEMS engine_editor editor_hud)
+        add_executable(${APP} WIN32 src/editor/main.cpp)
+        target_link_libraries(${APP} PRIVATE editor_frontend)
+        if(MINGW)
+            target_link_options(${APP} PRIVATE -municode)
+        endif()
+    endforeach()
+    target_compile_definitions(editor_hud PRIVATE EDITOR_HUD_DESIGNER)
     if(MSVC)
-        target_compile_options(engine_editor PRIVATE /W4 /permissive-)
+        target_compile_options(editor_frontend PRIVATE /W4 /permissive-)
     else()
-        target_compile_options(engine_editor PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(editor_frontend PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 else()
     # Headless Linux build uses the same Vulkan renderer with GPU image readback.
@@ -175,6 +175,7 @@ else()
     target_link_libraries(engine_editor PRIVATE engine_core)
 endif()
 
+option(BUILD_TESTING "Build developer test executables (not needed to run the editors)" OFF)
 include(CTest)
 if(BUILD_TESTING)
     add_executable(engine_tests tests/engine_tests.cpp)
@@ -201,7 +202,7 @@ if(BUILD_TESTING)
         target_compile_options(ui_tests PRIVATE -UNDEBUG)
     endif()
     add_test(NAME ui_tests COMMAND ui_tests)
-    foreach(TEST IN ITEMS geometry_tests geometry_gpu_tests input_tests render_worker_tests
+    foreach(TEST IN ITEMS hud_tests geometry_tests geometry_gpu_tests input_tests render_worker_tests
             camera_smoothing_tests render_worker_gpu_tests log_tests docking_tests primitives_gpu_tests)
         add_executable(${TEST} tests/${TEST}.cpp)
         target_link_libraries(${TEST} PRIVATE engine_core)
@@ -218,10 +219,9 @@ if(BUILD_TESTING)
     if(WIN32)
         # Exercise editor state without a window or Vulkan device. Building this
         # target also catches header/implementation drift in app.cpp.
-        add_executable(editor_state_tests tests/editor_state_tests.cpp src/editor/app.cpp
-            src/editor/interaction.cpp src/editor/gizmo.cpp src/editor/ui.cpp src/editor/scene_io.cpp)
+        add_executable(editor_state_tests tests/editor_state_tests.cpp)
         target_include_directories(editor_state_tests PRIVATE src/editor)
-        target_link_libraries(editor_state_tests PRIVATE engine_core user32)
+        target_link_libraries(editor_state_tests PRIVATE editor_frontend)
         target_compile_definitions(editor_state_tests PRIVATE UNICODE _UNICODE)
         if(MSVC)
             target_compile_options(editor_state_tests PRIVATE /UNDEBUG /W4 /permissive-)
@@ -246,6 +246,9 @@ endif()
 set_target_properties(engine_editor PROPERTIES INSTALL_RPATH "$ORIGIN")
 install(TARGETS engine_editor engine_core
     RUNTIME DESTINATION . LIBRARY DESTINATION . ARCHIVE DESTINATION lib)
+if(WIN32)
+    install(TARGETS editor_hud RUNTIME DESTINATION .)
+endif()
 install(FILES README.md DESTINATION .)
 install(FILES docs/objects.md docs/threading.md docs/editor_ui.md DESTINATION docs)
 install(FILES src/engine/ui/third_party/imgui/LICENSE.txt DESTINATION licenses RENAME Dear-ImGui.txt)

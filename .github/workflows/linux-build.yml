@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y ninja-build nasm libvulkan-dev glslang-tools mesa-vulkan-drivers libx11-dev xvfb
-      - run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENGINE_USE_ASM=${{ matrix.asm }} -DENGINE_BUILD_WINDOW_EXAMPLE=ON -DCMAKE_CXX_FLAGS=-Werror
+      - run: cmake -S . -B build -G Ninja -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release -DENGINE_USE_ASM=${{ matrix.asm }} -DENGINE_BUILD_WINDOW_EXAMPLE=ON -DCMAKE_CXX_FLAGS=-Werror
       - run: cmake --build build --parallel 2
       - run: ctest --test-dir build --output-on-failure
       - name: Create and close real X11 windows
