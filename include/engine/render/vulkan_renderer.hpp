@@ -53,16 +53,28 @@ public:
 #ifdef _WIN32
     // Call before initialize(). The caller owns both native handles.
     void set_window(void* hinstance, void* hwnd);
+    void set_external_mouse_capture(bool enabled);
 #endif
     // UI state/backends live in the engine DLL. Native Win32 input is forwarded
     // through handle_ui_message(); headless callers feed ImGuiIO directly.
     void enable_ui(float font_size = 17.0F);
     void begin_ui_frame(float delta_seconds = 1.0F / 60.0F);
+    // Finalize on the UI/window thread before handing exclusive ownership to a
+    // render worker. No frontend renderer/ImGui access until that worker finishes.
+    void finish_ui_frame();
 #ifdef _WIN32
     bool handle_ui_message(void* hwnd, unsigned int message,
                            std::uintptr_t wparam, std::intptr_t lparam);
 #endif
     [[nodiscard]] unsigned int antialiasing_samples() const noexcept;
+    // Lightweight runtime graphics settings. They affect the next render and do
+    // not recreate the Vulkan device or swapchain.
+    void set_clear_color(Vec3 color);
+    [[nodiscard]] Vec3 clear_color() const noexcept { return clear_color_; }
+    void set_grid_visible(bool visible) noexcept { grid_visible_ = visible; }
+    [[nodiscard]] bool grid_visible() const noexcept { return grid_visible_; }
+    // 0 = translation arrows, 1 = rotation rings, 2 = scale handles.
+    void set_gizmo_mode(int mode) noexcept { gizmo_mode_ = mode >= 0 && mode <= 2 ? mode : 0; }
     void initialize();
     void shutdown() noexcept;
     void resize(int width, int height);
@@ -90,6 +102,9 @@ private:
     std::unique_ptr<Impl> impl_;
     int width_{1};
     int height_{1};
+    Vec3 clear_color_{39.0F / 255.0F, 39.0F / 255.0F, 41.0F / 255.0F};
+    bool grid_visible_{true};
+    int gizmo_mode_{};
     std::vector<std::uint32_t> pixels_;
 };
 

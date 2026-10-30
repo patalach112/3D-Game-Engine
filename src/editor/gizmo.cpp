@@ -1,5 +1,6 @@
 #include "editor_app.hpp"
 #include "engine/log.hpp"
+#include "engine/gizmo.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -9,8 +10,7 @@ namespace editor {
 
 bool hit_gizmo(int sx, int sy, int view_w, int view_h, engine::Entity& entity) {
     App& g = app();
-    const float d = magnitude(sub(g.camera.position, entity.transform.position));
-    const float handle_len = std::clamp(d * 0.13F, 0.8F, 2.0F);
+    const float handle_len = engine::gizmo_length(g.camera.position,entity.transform.position);
     const int radius = std::clamp(view_h / 75, 8, 14) + 5;
     const engine::Vec3 axes[3]{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
     const auto center = engine::project_to_screen(entity.transform.position, g.camera, view_w, view_h);
@@ -20,6 +20,20 @@ bool hit_gizmo(int sx, int sy, int view_w, int view_h, engine::Entity& entity) {
     int chosen = -1;
     float chosen_sign = 1.0F;
     for (int axis = 0; axis < 3; ++axis) {
+        if (g.gizmo_mode==1) {
+            for (int i=0;i<64;++i) {
+                const auto a=engine::project_to_screen(engine::gizmo_ring_point(entity.transform.position,axis,
+                    handle_len,2*engine::kGizmoPi*i/64),g.camera,view_w,view_h);
+                const auto b=engine::project_to_screen(engine::gizmo_ring_point(entity.transform.position,axis,
+                    handle_len,2*engine::kGizmoPi*(i+1)/64),g.camera,view_w,view_h);
+                if (!a.visible || !b.visible) continue;
+                const float dx=b.x-a.x,dy=b.y-a.y,length2=dx*dx+dy*dy;
+                const float t=length2>0.001F?std::clamp(((sx-a.x)*dx+(sy-a.y)*dy)/length2,0.0F,1.0F):0;
+                const float x=a.x+t*dx-sx,y=a.y+t*dy-sy,dist=x*x+y*y;
+                if (dist<best && dist<64) { best=dist; chosen=axis; chosen_sign=1; }
+            }
+            continue;
+        }
         for (float sign : {-1.0F, 1.0F}) {
             const auto p = engine::project_to_screen(
                 add(entity.transform.position, mul(axes[axis], handle_len * sign)),
@@ -64,6 +78,8 @@ void add_primitive(engine::PrimitiveType type) {
     case engine::PrimitiveType::Sphere: name = "Sphere"; break;
     case engine::PrimitiveType::Cylinder: name = "Cylinder"; break;
     case engine::PrimitiveType::Plane: name = "Plane"; break;
+    case engine::PrimitiveType::Circle2D: name = "Circle 2D"; break;
+    case engine::PrimitiveType::Square2D: name = "Square 2D"; break;
     default: break;
     }
     auto& entity = g.scene.create_entity(std::string(name) + " " + std::to_string(g.scene.entity_count()), type);
@@ -72,7 +88,7 @@ void add_primitive(engine::PrimitiveType type) {
     if (type == engine::PrimitiveType::Plane) entity.transform.scale = {3.0F, 0.05F, 3.0F};
     g.selected = entity.id;
     g.status = L"Dodano obiekt";
-    LOG_DEBUG("editor", "Added %s", entity.name.c_str());
+    LOG_INFO("editor", "Dodano %s", entity.name.c_str());
 }
 
 } // namespace editor

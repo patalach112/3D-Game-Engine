@@ -1,4 +1,5 @@
 #include "editor_app.hpp"
+#include "engine/log.hpp"
 
 #include <fstream>
 #include <iomanip>
@@ -9,6 +10,7 @@ void save_scene() {
     std::ofstream file("scene.txt");
     if (!file) {
         app().status = L"Nie udało się zapisać sceny";
+        LOG_ERROR("editor","Nie udało się otworzyć scene.txt");
         return;
     }
     file << "# Starter 3D Engine scene v4 (UTF-8 quoted name, then primitive type)\n";
@@ -20,6 +22,8 @@ void save_scene() {
              << e.transform.scale.z << '\n';
     }
     file.flush();
+    if (file) LOG_INFO("editor","Zapisano scenę do scene.txt");
+    else LOG_ERROR("editor","Błąd zapisu scene.txt");
     app().status = file?L"Zapisano scenę do scene.txt":L"Błąd zapisu sceny";
 }
 

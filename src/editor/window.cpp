@@ -7,31 +7,50 @@ namespace editor {
 namespace {
 bool over_scene(HWND hwnd,LPARAM lp) {
     POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};
-    return app().ready && PtInRect(&app().viewport_bounds,p)
+    return app().ready && scene_input_at(p.x,p.y)
         && !ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel)
         && GetActiveWindow()==hwnd;
 }
 }
-LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
+void apply_input_event(HWND hwnd,const engine::InputEvent& event) {
     auto& g=app();
-    // Always feed input/focus/UTF-16 characters to the engine's platform backend.
-    // ImGui owns textbox selection, caret, clipboard, undo, UTF-8 and scrollbars.
-    const bool handled=g.renderer.handle_ui_message(hwnd,message,wp,lp);
-    switch (message) {
-    case WM_PAINT: render_frame(hwnd); return 0;
-    case WM_ERASEBKGND: return 1;
-    case WM_GETMINMAXINFO: {
-        auto* limits=reinterpret_cast<MINMAXINFO*>(lp);
-        limits->ptMinTrackSize.x=900; limits->ptMinTrackSize.y=600; return 0;
+    if (event.kind==engine::InputKind::Reset) {
+        auto& io=ImGui::GetIO();
+        io.ClearEventsQueue(); io.ClearInputKeys(); io.ClearInputMouse();
+        io.AddFocusEvent(false); io.AddFocusEvent(GetForegroundWindow()==hwnd);
+        g.orbit_input={}; g.orbit_input.pointerValid=false; g.orbit_events.clear();
+        g.orbit.dragging=false; g.drag_axis=-1;
+        g.native_buttons=0;
+        if (GetCapture()==hwnd) ReleaseCapture();
+        g.status=L"Przeciążenie kolejki input: zresetowano przyciski";
+        return;
     }
-    case WM_TIMER:
-        if (wp==1 && g.ready && !IsIconic(hwnd)) InvalidateRect(hwnd,nullptr,FALSE);
-        return 0;
-    case WM_SIZE:
-        if (wp!=SIZE_MINIMIZED) InvalidateRect(hwnd,nullptr,FALSE);
-        return 0;
+    const auto message=static_cast<UINT>(event.message);
+    const auto wp=static_cast<WPARAM>(event.wparam);
+    const auto lp=static_cast<LPARAM>(event.lparam);
+    g.renderer.handle_ui_message(hwnd,message,wp,lp);
+    g.orbit_input.rightPressed=false;
+    g.orbit_input.wheel=0;
+    if (event.kind==engine::InputKind::PointerMove || event.kind==engine::InputKind::PointerButton
+        || event.kind==engine::InputKind::Wheel) {
+        g.orbit_input.mouse={event.x,event.y};
+        g.orbit_input.pointerValid=true;
+    }
+    if (message==WM_RBUTTONDOWN || message==WM_RBUTTONDBLCLK) {
+        g.orbit_input.rightDown=true; g.orbit_input.rightPressed=true;
+    } else if (message==WM_RBUTTONUP) g.orbit_input.rightDown=false;
+    else if (message==WM_MOUSEWHEEL) g.orbit_input.wheel+=static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp))/WHEEL_DELTA;
+    else if (message==WM_KILLFOCUS || message==WM_CAPTURECHANGED) {
+        g.orbit_input.rightDown=false; g.orbit_input.rightPressed=false;
+    }
+    if (message==WM_KILLFOCUS) g.orbit_input.focused=false;
+    else if (message==WM_SETFOCUS) g.orbit_input.focused=true;
+    if (event.kind==engine::InputKind::PointerMove || event.kind==engine::InputKind::PointerButton
+        || event.kind==engine::InputKind::Wheel || event.kind==engine::InputKind::Focus)
+        g.orbit_events.push_back(g.orbit_input);
+    switch (message) {
     case WM_LBUTTONDOWN: {
-        if (!over_scene(hwnd,lp)) return 0;
+        if (!over_scene(hwnd,lp)) return;
         const auto view=view_rect();
         const int width=static_cast<int>(view.right-view.left),height=static_cast<int>(view.bottom-view.top);
         const int x=GET_X_LPARAM(lp)-view.left,y=GET_Y_LPARAM(lp)-view.top;
@@ -46,13 +65,13 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
             }
             g.selected=hit;
         }
-        return 0; // Win32 ImGui backend already maintains per-button capture.
+        return; // Native capture is maintained immediately by window_proc.
     }
     case WM_LBUTTONUP:
         g.drag_axis=-1;
-        return 0;
+        return;
     case WM_RBUTTONDOWN:
-    case WM_RBUTTONUP: return 0; // Orbit input is consumed after ImGui::NewFrame.
+    case WM_RBUTTONUP: return; // Orbit input is consumed after ImGui::NewFrame.
     case WM_MOUSEMOVE: {
         if (g.drag_axis >= 0 && (wp & MK_LBUTTON)) {
             const auto view = view_rect();
@@ -94,22 +113,111 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
             }
             InvalidateRect(hwnd, nullptr, FALSE);
         }
-        return 0;
+        return;
     }
-    case WM_MOUSEWHEEL: return 0; // Current-frame input routes scroll vs camera zoom.
-    case WM_KEYDOWN: return 0; // App shortcuts are routed after the UI has consumed keys.
-    case WM_CHAR: return 0; // Already queued by ImGui's Win32 backend.
+    case WM_MOUSEWHEEL: return; // Current-frame input routes scroll vs camera zoom.
+    case WM_KEYDOWN: return; // App shortcuts are routed after the UI has consumed keys.
+    case WM_CHAR: return; // Already queued by ImGui's Win32 backend.
     case WM_KILLFOCUS:
     case WM_CAPTURECHANGED:
-        g.orbit.dragging=false; g.drag_axis=-1; return 0;
-    case WM_CLOSE:
-        LOG_INFO("editor", "Window closing");
-        KillTimer(hwnd,1); g.ready=false;
-        // Release Vulkan surface and UI resources before destroying their HWND.
-        g.renderer.shutdown(); DestroyWindow(hwnd); return 0;
-    case WM_DESTROY: PostQuitMessage(0); return 0;
-    default: break;
+        g.orbit.dragging=false; g.drag_axis=-1; return;
+    default: return;
     }
-    return handled?1:DefWindowProcW(hwnd,message,wp,lp);
+}
+
+LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
+    auto& g=app();
+    engine::InputKind kind=engine::InputKind::Other;
+    bool queued=true;
+    switch (message) {
+    case WM_NCCALCSIZE:
+        if (wp && IsZoomed(hwnd)) {
+            auto* area=reinterpret_cast<NCCALCSIZE_PARAMS*>(lp);
+            MONITORINFO monitor{sizeof(MONITORINFO),{},{},0};
+            if (GetMonitorInfoW(MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST),&monitor))
+                area->rgrc[0]=monitor.rcWork;
+        }
+        return 0;
+    case WM_NCHITTEST: {
+        POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};
+        RECT rect{}; GetWindowRect(hwnd,&rect);
+        if (!IsZoomed(hwnd)) {
+            constexpr int border=7;
+            const bool left=point.x<rect.left+border,right=point.x>=rect.right-border;
+            const bool top=point.y<rect.top+border,bottom=point.y>=rect.bottom-border;
+            if (top && left) return HTTOPLEFT;
+            if (top && right) return HTTOPRIGHT;
+            if (bottom && left) return HTBOTTOMLEFT;
+            if (bottom && right) return HTBOTTOMRIGHT;
+            if (left) return HTLEFT;
+            if (right) return HTRIGHT;
+            if (top) return HTTOP;
+            if (bottom) return HTBOTTOM;
+        }
+        ScreenToClient(hwnd,&point);
+        return !g.menu_open && PtInRect(&g.title_drag_bounds,point)?HTCAPTION:HTCLIENT;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT paint{}; BeginPaint(hwnd,&paint); EndPaint(hwnd,&paint); return 0;
+    }
+    case WM_ERASEBKGND: return 1;
+    case WM_GETMINMAXINFO: {
+        auto* limits=reinterpret_cast<MINMAXINFO*>(lp);
+        limits->ptMinTrackSize.x=900; limits->ptMinTrackSize.y=600; return 0;
+    }
+    case WM_SIZE: g.minimized=wp==SIZE_MINIMIZED; return 0;
+    case WM_CLOSE: g.close_requested=true; return 0;
+    case WM_DESTROY: g.close_requested=true; PostQuitMessage(0); return 0;
+    case kWorkerWake: return 0;
+    case WM_MOUSEMOVE: kind=engine::InputKind::PointerMove; break;
+    case WM_LBUTTONDOWN: case WM_LBUTTONDBLCLK: case WM_LBUTTONUP:
+    case WM_RBUTTONDOWN: case WM_RBUTTONDBLCLK: case WM_RBUTTONUP:
+    case WM_MBUTTONDOWN: case WM_MBUTTONDBLCLK: case WM_MBUTTONUP:
+    case WM_XBUTTONDOWN: case WM_XBUTTONDBLCLK: case WM_XBUTTONUP:
+        kind=engine::InputKind::PointerButton; break;
+    case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL: kind=engine::InputKind::Wheel; break;
+    case WM_KEYDOWN: case WM_KEYUP: case WM_SYSKEYDOWN: case WM_SYSKEYUP:
+        kind=engine::InputKind::Key; break;
+    case WM_CHAR: kind=engine::InputKind::Text; break;
+    case WM_KILLFOCUS: case WM_SETFOCUS: case WM_CAPTURECHANGED: kind=engine::InputKind::Focus; break;
+    case WM_SETCURSOR: case WM_MOUSELEAVE: case WM_INPUTLANGCHANGE: case WM_DEVICECHANGE: break;
+    default: queued=false; break;
+    }
+    if (queued && g.inputs) {
+        engine::InputEvent event;
+        event.window=reinterpret_cast<std::uintptr_t>(hwnd);
+        event.message=message; event.kind=kind; event.wparam=wp; event.lparam=lp;
+        event.extra_info=static_cast<std::uint64_t>(GetMessageExtraInfo());
+        GetKeyboardState(event.keyboard.data());
+        if (kind==engine::InputKind::Wheel) {
+            POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)}; ScreenToClient(hwnd,&p);
+            event.x=static_cast<float>(p.x); event.y=static_cast<float>(p.y);
+        }
+        g.inputs->enqueue(event); // NASM producer; input.cpp is the sole consumer.
+    }
+    // Capture must happen immediately on the HWND-owning thread, not in the
+    // worker. Keep all buttons captured until the final release.
+    if (kind==engine::InputKind::PointerButton) {
+        unsigned button=0; bool down=false;
+        switch (message) {
+        case WM_LBUTTONDOWN: case WM_LBUTTONDBLCLK: button=1; down=true; break;
+        case WM_LBUTTONUP: button=1; break;
+        case WM_RBUTTONDOWN: case WM_RBUTTONDBLCLK: button=2; down=true; break;
+        case WM_RBUTTONUP: button=2; break;
+        case WM_MBUTTONDOWN: case WM_MBUTTONDBLCLK: button=4; down=true; break;
+        case WM_MBUTTONUP: button=4; break;
+        default: button=GET_XBUTTON_WPARAM(wp)==XBUTTON1?8:16;
+            down=message!=WM_XBUTTONUP; break;
+        }
+        if (down) { g.native_buttons|=button; SetCapture(hwnd); }
+        else { g.native_buttons&=~button; if (!g.native_buttons && GetCapture()==hwnd) ReleaseCapture(); }
+        return message==WM_XBUTTONDOWN || message==WM_XBUTTONUP || message==WM_XBUTTONDBLCLK?TRUE:0;
+    }
+    if (message==WM_KILLFOCUS || message==WM_CAPTURECHANGED) g.native_buttons=0;
+    if (message==WM_KILLFOCUS && GetCapture()==hwnd) ReleaseCapture();
+    if (message==WM_SETCURSOR && LOWORD(lp)==HTCLIENT) return TRUE;
+    if (message==WM_KEYDOWN || message==WM_KEYUP || message==WM_CHAR || message==WM_MOUSEWHEEL || message==WM_MOUSEHWHEEL)
+        return 0;
+    return DefWindowProcW(hwnd,message,wp,lp);
 }
 } // namespace editor

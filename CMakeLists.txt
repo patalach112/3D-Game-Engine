@@ -13,6 +13,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Vulkan SDK supplies headers/loader and glslc (or glslangValidator).
 find_package(Vulkan 1.1 REQUIRED)
+find_package(Threads REQUIRED)
 find_program(ENGINE_GLSLC NAMES glslc HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin")
 find_program(ENGINE_GLSLANG NAMES glslangValidator glslang HINTS "$ENV{VULKAN_SDK}/Bin" "$ENV{VULKAN_SDK}/bin")
 if(NOT ENGINE_GLSLC AND NOT ENGINE_GLSLANG)
@@ -78,6 +79,8 @@ endif()
 add_library(engine_core SHARED
     src/engine/objects.cpp
     src/engine/camera_controller.cpp
+    src/engine/input.cpp
+    src/engine/render_worker.cpp
     "${SHADER_DIR}/geometry_shaders.hpp"
     src/engine/platform.cpp
     ${ENGINE_PLATFORM_SOURCE}
@@ -96,12 +99,12 @@ add_library(engine_core SHARED
 target_include_directories(engine_core PUBLIC include PRIVATE "${SHADER_DIR}")
 # One ImGui implementation in the shared engine; consumers use the same ABI/config.
 target_include_directories(engine_core SYSTEM PUBLIC src/engine/ui/third_party/imgui)
-target_link_libraries(engine_core PRIVATE Vulkan::Vulkan)
+target_link_libraries(engine_core PUBLIC Threads::Threads PRIVATE Vulkan::Vulkan)
 target_compile_definitions(engine_core PRIVATE ENGINE_BUILD_DLL)
 set_target_properties(engine_core PROPERTIES OUTPUT_NAME engine
     VERSION ${PROJECT_VERSION} SOVERSION 1)
 if(ENGINE_USE_ASM)
-    target_sources(engine_core PRIVATE src/engine/call.asm)
+    target_sources(engine_core PRIVATE src/engine/call.asm src/engine/input_queue.asm)
     target_compile_definitions(engine_core PRIVATE ENGINE_HAS_ASM)
     if(WIN32)
         target_sources(engine_core PRIVATE src/engine/engine_asm.def)
@@ -189,7 +192,8 @@ if(BUILD_TESTING)
         target_compile_options(ui_tests PRIVATE -UNDEBUG)
     endif()
     add_test(NAME ui_tests COMMAND ui_tests)
-    foreach(TEST IN ITEMS geometry_tests geometry_gpu_tests)
+    foreach(TEST IN ITEMS geometry_tests geometry_gpu_tests input_tests render_worker_tests
+            camera_smoothing_tests render_worker_gpu_tests log_tests docking_tests primitives_gpu_tests)
         add_executable(${TEST} tests/${TEST}.cpp)
         target_link_libraries(${TEST} PRIVATE engine_core)
         if(MSVC)
@@ -199,10 +203,14 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME ${TEST} COMMAND ${TEST})
     endforeach()
+    target_sources(log_tests PRIVATE tests/log_release_probe.cpp)
+    set_tests_properties(input_tests render_worker_tests camera_smoothing_tests PROPERTIES TIMEOUT 30)
+    set_tests_properties(render_worker_gpu_tests PROPERTIES TIMEOUT 120)
     if(WIN32)
         # Exercise editor state without a window or Vulkan device. Building this
         # target also catches header/implementation drift in app.cpp.
-        add_executable(editor_state_tests tests/editor_state_tests.cpp src/editor/app.cpp)
+        add_executable(editor_state_tests tests/editor_state_tests.cpp src/editor/app.cpp
+            src/editor/interaction.cpp src/editor/gizmo.cpp src/editor/ui.cpp src/editor/scene_io.cpp)
         target_include_directories(editor_state_tests PRIVATE src/editor)
         target_link_libraries(editor_state_tests PRIVATE engine_core user32)
         target_compile_definitions(editor_state_tests PRIVATE UNICODE _UNICODE)
@@ -230,7 +238,7 @@ set_target_properties(engine_editor PROPERTIES INSTALL_RPATH "$ORIGIN")
 install(TARGETS engine_editor engine_core
     RUNTIME DESTINATION . LIBRARY DESTINATION . ARCHIVE DESTINATION lib)
 install(FILES README.md DESTINATION .)
-install(FILES docs/objects.md DESTINATION docs)
+install(FILES docs/objects.md docs/threading.md docs/editor_ui.md DESTINATION docs)
 install(FILES src/engine/ui/third_party/imgui/LICENSE.txt DESTINATION licenses RENAME Dear-ImGui.txt)
 set(CPACK_GENERATOR ZIP)
 set(CPACK_PACKAGE_NAME Starter3DEngine)

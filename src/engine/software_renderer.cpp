@@ -55,9 +55,12 @@ template<class T> bool named(const std::vector<T>& entries, const char* name) {
             return std::strcmp(entry.layerName, name) == 0;
     });
 }
-VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT,
+VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     VkDebugUtilsMessageTypeFlagsEXT, const VkDebugUtilsMessengerCallbackDataEXT* message, void*) {
-    std::cerr << "Vulkan validation: " << message->pMessage << '\n';
+    try {
+        log_write((severity&VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)?LogLevel::Error:LogLevel::Warn,
+            "vulkan",message->pMessage);
+    } catch (...) {} // Never unwind through the driver's C callback.
     return VK_FALSE;
 }
 } // namespace
@@ -96,7 +99,7 @@ struct VulkanRenderer::Impl {
     VkFormat depth_format{};
     VkSampleCountFlagBits samples{VK_SAMPLE_COUNT_1_BIT};
     ImGuiContext* ui{};
-    bool ui_platform{}, ui_frame_open{};
+    bool ui_platform{}, ui_frame_open{}, ui_frame_ready{};
     struct Image { VkImage handle{}; VkDeviceMemory memory{}; VkImageView view{}; } color, depth, msaa;
     struct Buffer { VkBuffer handle{}; VkDeviceMemory memory{}; VkDeviceSize capacity{}; void* mapped{}; } vertices, readback, geometry, object_data, indirect, ui_uv;
     VkFramebuffer framebuffer{};
@@ -122,7 +125,8 @@ struct VulkanRenderer::Impl {
     void begin();
     void submit(VkSemaphore wait = VK_NULL_HANDLE, VkSemaphore signal = VK_NULL_HANDLE);
     void draw(const FrameGeometry& frame, const EditorCamera& camera, int width, int height,
-              std::vector<std::uint32_t>& pixels, RenderViewport scene_view, bool draw_ui);
+              std::vector<std::uint32_t>& pixels, RenderViewport scene_view, bool draw_ui,
+              Vec3 clear_color);
     void present();
 };
 
@@ -597,7 +601,7 @@ void VulkanRenderer::Impl::submit(VkSemaphore wait, VkSemaphore signal) {
 }
 void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& camera,
                                 int width, int height, std::vector<std::uint32_t>& pixels,
-                                RenderViewport scene_view, bool draw_ui) {
+                                RenderViewport scene_view, bool draw_ui, Vec3 clear_color) {
     auto packed=frame.geometry;
     const auto custom_hud_indices=packed.layout.hudIndexCount;
     const auto custom_hud_vertices=packed.layout.hudVertexCount;
@@ -691,7 +695,7 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
         vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,0,0,nullptr,1,&visibility,0,nullptr);
     }
     std::array<VkClearValue,2> clears{};
-    clears[0].color={{39.0F/255,39.0F/255,41.0F/255,1}};
+    clears[0].color={{clear_color.x,clear_color.y,clear_color.z,1}};
     clears[1].depthStencil={1,0};
     VkRenderPassBeginInfo pass{}; pass.sType=VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     pass.renderPass=render_pass; pass.framebuffer=framebuffer;
@@ -848,6 +852,10 @@ void VulkanRenderer::Impl::create_swapchain() {
     check(vkGetPhysicalDeviceSurfacePresentModesKHR(physical,surface,&mode_count,modes.data()),"Query presentation modes");
     if (std::find(modes.begin(),modes.end(),VK_PRESENT_MODE_MAILBOX_KHR)!=modes.end())
         info.presentMode=VK_PRESENT_MODE_MAILBOX_KHR;
+    // No software limiter / vsync request: IMMEDIATE first (tearing possible).
+    // Some surfaces/drivers expose only MAILBOX/FIFO; respect their capabilities.
+    if (std::find(modes.begin(),modes.end(),VK_PRESENT_MODE_IMMEDIATE_KHR)!=modes.end())
+        info.presentMode=VK_PRESENT_MODE_IMMEDIATE_KHR;
     info.clipped=VK_TRUE;
     check(vkCreateSwapchainKHR(device,&info,nullptr,&swapchain),"Create Vulkan swapchain");
     swap_extent=extent; swap_format=chosen->format;
@@ -960,6 +968,7 @@ VulkanRenderer::VulkanRenderer() : impl_(std::make_unique<Impl>()) {}
 VulkanRenderer::~VulkanRenderer() = default;
 void VulkanRenderer::initialize() {
     if (!impl_) impl_=std::make_unique<Impl>();
+    if (impl_->device) return;
     try {
         LOG_DEBUG("renderer", "Initializing Vulkan instance");
         impl_->init();
@@ -1045,7 +1054,7 @@ void VulkanRenderer::begin_ui_frame(float delta_seconds) {
     if (!std::isfinite(delta_seconds) || delta_seconds<=0)
         throw std::invalid_argument("UI delta time must be positive and finite");
     if (!impl_ || !impl_->ui) throw std::logic_error("Call enable_ui before begin_ui_frame");
-    if (impl_->ui_frame_open) throw std::logic_error("Finish the UI frame with render before beginning another");
+    if (impl_->ui_frame_open || impl_->ui_frame_ready) throw std::logic_error("Render the previous UI frame before beginning another");
     ImGui::SetCurrentContext(impl_->ui);
     ImGui_ImplVulkan_NewFrame();
 #ifdef _WIN32
@@ -1057,7 +1066,19 @@ void VulkanRenderer::begin_ui_frame(float delta_seconds) {
     ImGui::NewFrame();
     impl_->ui_frame_open=true;
 }
+void VulkanRenderer::finish_ui_frame() {
+    if (!impl_ || !impl_->ui_frame_open) throw std::logic_error("No UI frame to finish");
+    ImGui::SetCurrentContext(impl_->ui);
+    ImGui::Render();
+    impl_->ui_frame_open=false;
+    impl_->ui_frame_ready=true;
+}
 #ifdef _WIN32
+void VulkanRenderer::set_external_mouse_capture(bool enabled) {
+    if (!impl_ || !impl_->ui_platform) throw std::logic_error("Enable Win32 UI first");
+    ImGui::SetCurrentContext(impl_->ui);
+    ImGui_ImplWin32_SetExternalMouseCapture(enabled);
+}
 bool VulkanRenderer::handle_ui_message(void* window, unsigned int message,
                                       std::uintptr_t wparam, std::intptr_t lparam) {
     if (!impl_ || !impl_->ui || !impl_->ui_platform) return false;
@@ -1068,6 +1089,12 @@ bool VulkanRenderer::handle_ui_message(void* window, unsigned int message,
 #endif
 unsigned int VulkanRenderer::antialiasing_samples() const noexcept {
     return impl_?static_cast<unsigned int>(impl_->samples):1;
+}
+void VulkanRenderer::set_clear_color(Vec3 color) {
+    if (!finite(color) || color.x < 0.0F || color.x > 1.0F
+        || color.y < 0.0F || color.y > 1.0F || color.z < 0.0F || color.z > 1.0F)
+        throw std::invalid_argument("Clear color components must be finite and between 0 and 1");
+    clear_color_ = color;
 }
 void VulkanRenderer::resize(int width, int height) {
     width_=std::max(1,width); height_=std::max(1,height);
@@ -1088,15 +1115,12 @@ void VulkanRenderer::render(const Scene& scene, const EditorCamera& camera, Enti
         throw std::invalid_argument("Scene viewport must fit inside the render target");
     initialize();
     try {
-        const bool draw_ui=impl_->ui_frame_open;
-        if (!draw_ui) LOG_DEBUG("renderer", "Rendering frame");
-        if (draw_ui) {
-            ImGui::SetCurrentContext(impl_->ui);
-            ImGui::Render();
-            impl_->ui_frame_open=false;
-        }
-        const auto frame=scene_geometry(scene,camera,selected,viewport.width,viewport.height);
-        impl_->draw(frame,camera,width_,height_,pixels_,viewport,draw_ui);
+        const bool draw_ui=impl_->ui_frame_open || impl_->ui_frame_ready;
+        if (impl_->ui_frame_open) finish_ui_frame();
+        if (impl_->ui_frame_ready) ImGui::SetCurrentContext(impl_->ui);
+        impl_->ui_frame_ready=false;
+        const auto frame=scene_geometry(scene,camera,selected,viewport.width,viewport.height,grid_visible_,gizmo_mode_);
+        impl_->draw(frame,camera,width_,height_,pixels_,viewport,draw_ui,clear_color_);
     } catch (...) { shutdown(); throw; }
 }
 void VulkanRenderer::render_geometry(const GeometryBuffer& geometry,const EditorCamera& camera,RenderViewport viewport) {
@@ -1108,10 +1132,12 @@ void VulkanRenderer::render_geometry(const GeometryBuffer& geometry,const Editor
         ||viewport.x>width_-viewport.width||viewport.y>height_-viewport.height) throw std::invalid_argument("Invalid scene viewport");
     initialize();
     try {
-        const bool ui=impl_->ui_frame_open;
-        if (ui) { ImGui::SetCurrentContext(impl_->ui); ImGui::Render(); impl_->ui_frame_open=false; }
+        const bool ui=impl_->ui_frame_open || impl_->ui_frame_ready;
+        if (impl_->ui_frame_open) finish_ui_frame();
+        if (impl_->ui_frame_ready) ImGui::SetCurrentContext(impl_->ui);
+        impl_->ui_frame_ready=false;
         FrameGeometry frame; frame.geometry=geometry;
-        impl_->draw(frame,camera,width_,height_,pixels_,viewport,ui);
+        impl_->draw(frame,camera,width_,height_,pixels_,viewport,ui,clear_color_);
     } catch (...) { shutdown(); throw; }
 }
 const std::vector<DrawIndexedIndirectCommand>& VulkanRenderer::last_draw_commands() const noexcept {

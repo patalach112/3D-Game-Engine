@@ -10,6 +10,10 @@
 #include "engine/render/vulkan_renderer.hpp"
 #include "engine/ui.hpp"
 #include "engine/camera_controller.hpp"
+#include "engine/input.hpp"
+#include "engine/render/render_worker.hpp"
+#include <chrono>
+#include <deque>
 #include <string>
 
 namespace editor {
@@ -24,7 +28,36 @@ struct App {
     bool ready{}, renderer_failed{};
     int width{1280}, height{800};
     int left_width{250}, right_width{320}, bottom_height{180};
-    engine::OrbitState orbit;
+    engine::OrbitState orbit, displayed_orbit;
+    engine::OrbitInput orbit_input;
+    std::vector<engine::OrbitInput> orbit_events;
+    std::unique_ptr<engine::InputProcessor> inputs;
+    std::unique_ptr<engine::RenderWorker> render_worker;
+    bool close_requested{}, minimized{};
+    HWND hwnd{};
+    RECT title_drag_bounds{};
+    bool menu_open{}, docking_initialized{}, viewport_visible{}, scene_floating{};
+    ImDrawList* scene_drawlist{};
+    bool reset_layout{}, show_hierarchy{true}, show_inspector{true}, show_scene{true};
+    bool show_console{true}, show_resources{true}, show_notes{true}, show_renderer{true};
+    bool show_settings{}, focus_settings{};
+    ImGuiTextFilter console_filter;
+    bool console_levels[4]{true,true,true,true};
+    bool console_auto_scroll{true};
+    std::uint64_t console_clear_sequence{}, console_seen_sequence{};
+    struct ConsoleRow { std::string text; int level{}; };
+    std::deque<ConsoleRow> console_rows;
+    std::uint64_t console_loaded_sequence{};
+    char console_command[256]{};
+    unsigned native_buttons{};
+
+    // 0 means unlimited. The deadline is managed by the message-loop frame pacer.
+    int fps_limit{0};
+    std::chrono::steady_clock::time_point next_frame{};
+    std::chrono::steady_clock::time_point previous_frame{};
+    bool grid_visible{true};
+    engine::Vec3 background_color{39.0F / 255.0F, 39.0F / 255.0F, 41.0F / 255.0F};
+
     int drag_axis{-1};
     float drag_sign{1.0F};
     engine::Vec3 drag_start_position{};
@@ -46,6 +79,12 @@ struct App {
     char notes[8192]{};
 };
 App& app();
+using FrameClock = std::chrono::steady_clock;
+[[nodiscard]] bool frame_due(const App& state, FrameClock::time_point now) noexcept;
+void schedule_next_frame(App& state, FrameClock::time_point started,
+                         FrameClock::time_point completed) noexcept;
+[[nodiscard]] unsigned long frame_wait_milliseconds(const App& state,
+                                                     FrameClock::time_point now) noexcept;
 engine::Vec3 add(engine::Vec3 a,engine::Vec3 b);
 engine::Vec3 sub(engine::Vec3 a,engine::Vec3 b);
 engine::Vec3 mul(engine::Vec3 a,float n);
@@ -57,7 +96,11 @@ void update_camera();
 void update_layout();
 RECT view_rect();
 void draw_ui();
+bool scene_input_at(int x,int y);
 void render_frame(HWND hwnd);
+void reset_frame_timing();
+void apply_input_event(HWND hwnd,const engine::InputEvent& event);
+constexpr UINT kWorkerWake=WM_APP+1;
 void save_scene();
 void add_primitive(engine::PrimitiveType type);
 void duplicate_entity();

@@ -10,5 +10,7 @@ struct OrbitInput {
 // Consume the current UI frame, NOT stale WantCaptureMouse from a native message.
 // blockStart is for popups/modal UI. Once dragging, crossing a panel doesn't stop it.
 ENGINE_API bool update_orbit(OrbitState& state,const OrbitInput& input,RenderViewport viewport);
+// Exponential damping in seconds, shortest-path yaw, independent of frame rate.
+ENGINE_API void smooth_orbit(OrbitState& displayed,const OrbitState& target,float delta_seconds,float response=18.0F);
 ENGINE_API void apply_orbit(EditorCamera& camera,const OrbitState& state);
 }

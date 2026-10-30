@@ -30,8 +30,9 @@ w konfiguracji Debug, jeśli są zainstalowane. Ich brak nie blokuje startu.
 ### Windows
 
 Cały **obszar klienta** głównego okna ma jedną powierzchnię `VkSurfaceKHR` i swapchain.
-Nie ma już osobnego HWND dla widoku 3D ani warstwy paneli GDI. Ramkę systemową,
-pasek tytułu i natywne okno IME nadal obsługuje Windows/DWM.
+Nie ma osobnego HWND dla widoku 3D ani warstwy paneli GDI. Edytor ma własny
+pasek tytułu i menu Vulkan; przeciąganie, resize, minimalizacja i maksymalizacja
+korzystają z natywnych komunikatów Windows. Natywne okno IME obsługuje Windows.
 
 ```text
 Scene → geometria → viewport + scissor 3D → kolor/depth MSAA
@@ -43,9 +44,9 @@ UI + font atlas → trójkąty + alpha blending w tym samym render passie
 `BeginPaint`/`EndPaint` wyłącznie zatwierdzają obszar uszkodzenia Win32.
 Zmiana rozmiaru okna odtwarza zasoby; zmiana podziału paneli zmienia viewport,
 bez tworzenia okien potomnych. Minimalizacja zatrzymuje rysowanie, a błędy
-`OUT_OF_DATE`/`SUBOPTIMAL` odtwarzają swapchain. UI odświeża się co około 16 ms
-(timer Win32), aby działały hover, kursor tekstowy i przeciąganie również bez
-zmian sceny. To nie jest gwarancja 60 FPS.
+`OUT_OF_DATE`/`SUBOPTIMAL` odtwarzają swapchain. UI odświeża się stale, domyślnie bez limitu FPS; opcjonalny limit jest dostępny
+w ustawieniach grafiki. Pętla komunikatów pozostaje responsywna podczas pracy
+wątku Vulkan.
 
 Backend współdzieli jeden zestaw zasobów klatki, chroniony fence przed ponownym
 użyciem. Semafory prezentacji są osobne na obraz swapchaina. Nie blokuje CPU po
@@ -62,6 +63,17 @@ skonfigurować z `-DENGINE_LINUX_X11=OFF` (wtedy nie wymaga nagłówków X11).
 Można użyć sprzętowego ICD albo programowego ICD (np. Mesa lavapipe / SwiftShader)
 w CI. Programowy ICD nadal wykonuje polecenia Vulkan; projekt nie ma fallbacku
 na poprzedni rasteryzator CPU. `pixels()` nie jest zapełniane w trybie swapchaina.
+
+## Panele, menu i konsola
+
+Edytor Windows używa Dear ImGui **1.91.9b-docking**, renderowanego przez Vulkan.
+Panele można dokować, odpinać, skalować i łączyć w zakładki wewnątrz głównego
+okna; układ zapisuje się w `editor_layout.ini`. Konsola na dole ma poziomy
+DEBUG/INFO/WARN/ERROR, filtr, kopiowanie, czyszczenie i komendy (`help`).
+Menu **Plik** zawiera nieaktywne Import/Eksport oraz Ustawienia, **Narzędzia**
+przełącza ruch/obrót/skalę gizma, a **Dodaj** ma podmenu otwierane po najechaniu:
+**Obiekty** (cztery dotychczasowe typy) oraz **Płaszczyzna** (koło 2D i kwadrat 2D).
+Szczegóły i lista testów: [docs/editor_ui.md](docs/editor_ui.md).
 
 ## Budowanie
 
@@ -117,7 +129,9 @@ Komendy terminala: `add`, `select ID`, `move X Y Z`, `delete`, `save`, `render`,
   obracanie kamery PPM, zoom kółkiem, zaznaczanie i przeciąganie obiektów.
 - Zapis sceny do `scene.txt` (v4: nazwy UTF-8 w cudzysłowach, w tym spacje).
 - GPU UI: wyszukiwanie hierarchii, lista ze scrollem, edycja nazw i transformacji,
-  rozwijane sekcje inspektora, przyciski, karty zasobów/notatek/diagnostyki.
+  rozwijane sekcje inspektora, przyciski oraz karty zasobów/notatek/diagnostyki.
+- Karta ustawień grafiki: limit 15–360 FPS lub `Unlimited`, widoczność siatki,
+  pole widzenia kamery i kolor tła viewportu. Pasek stanu pokazuje rzeczywisty FPS.
 - Wielowierszowe notatki: Enter/Tab, zaznaczanie, schowek i undo; zapis do
   `project_notes.txt`, ponowne wczytanie przy starcie (limit 8191 bajtów UTF-8).
 
@@ -167,8 +181,11 @@ jest zachowane przy zmianie zasobów/rozmiaru i zamykaniu aplikacji.
 Jeśli sterownik obsługuje MAILBOX, renderer wybiera go dla prezentacji bez tearingu
 z mniejszą kolejką starych klatek; w przeciwnym razie używa FIFO. Edytor składa
 teraz scenę i UI w każdej aktywnej klatce, nie używa dawnej bitmapowej pamięci
-podręcznej paneli. Nie jest to gwarancja konkretnego FPS — pomiar na
-rzeczywistym GPU jest nadal potrzebny, szczególnie dla dużych scen.
+podręcznej paneli. Pętla komunikatów usypia do precyzyjnego terminu kolejnej
+klatki dla ustawionego limitu; `Unlimited` usuwa programowy limit i renderuje bez
+wcześniejszego timera 16 ms. FIFO lub synchronizacja sterownika nadal mogą
+naturalnie ograniczyć tempo do odświeżania monitora. Pomiar na rzeczywistym GPU
+jest nadal potrzebny, szczególnie dla dużych scen.
 
 
 ## Platforma i biblioteka silnika
@@ -343,3 +360,14 @@ fokusu są obsługiwane jawnie. Dokładny ABI, pakowanie half/normalnej/rotacji,
 przykłady API, wymagania urządzenia i zasady współdzielenia bufora opisuje
 [dokumentacja obiektów](docs/objects.md). Testy CPU: geometry_tests; testy
 GPU shared-buffer/culling: geometry_gpu_tests.
+
+## Pętla bez limitu FPS i wątki
+
+Edytor Windows renderuje ciągle, bez timera 16 ms; swapchain preferuje IMMEDIATE
+(z możliwym tearingiem), a jeśli sterownik go nie udostępnia — MAILBOX/FIFO.
+Obrót i zoom kamery korzystają z tłumienia zależnego od czasu, nie od FPS.
+Input przechodzi przez kolejkę SPSC w `src/engine/input_queue.asm` do osobnego
+wątku w `src/engine/input.cpp`. Osobny worker przygotowuje geometrię, nagrywa
+polecenia Vulkan i prezentuje klatki; okno i UI pozostają na wątku właściciela HWND.
+Zasady własności, affinity, przepełnienia kolejki i testy:
+[dokumentacja wielowątkowości](docs/threading.md).
