@@ -3,6 +3,7 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <set>
 #include <sstream>
 #ifdef _WIN32
@@ -18,16 +19,18 @@ namespace engine::hud {
 Node* Document::find(Id id) { for (auto& n:nodes) if(n.id==id) return &n; return nullptr; }
 const Node* Document::find(Id id) const { for (auto& n:nodes) if(n.id==id) return &n; return nullptr; }
 bool accepts(Kind parent,Kind child) {
-    if (child==Kind::Bar || child==Kind::Window) return false;
+    if (child==Kind::Bar || child==Kind::Window || child==Kind::Footer) return false;
     if (parent==Kind::Bar || parent==Kind::List) return child==Kind::Button || child==Kind::List || child==Kind::Text;
-    if (parent==Kind::Window) return child==Kind::Panel;
+    if (parent==Kind::Window) return child==Kind::Panel || child==Kind::Input || child==Kind::Text || child==Kind::List;
     return parent==Kind::Panel && child!=Kind::Window && child!=Kind::Bar;
 }
 Id Document::add(Kind kind,Id parent,const std::string& text) {
-    if(nodes.size()>=4096 || next_id==0) return 0;
+    if(nodes.size()>=4096 || next_id==0 || next_id==std::numeric_limits<Id>::max() || kind<Kind::Bar || kind>Kind::Footer) return 0;
     const auto* p=find(parent);
-    if(parent?(!p || !accepts(p->kind,kind)):(kind!=Kind::Bar && kind!=Kind::Window)) return 0;
-    if(kind==Kind::Bar) for(const auto& n:nodes) if(n.kind==Kind::Bar) return 0;
+    if(parent?(!p || !accepts(p->kind,kind)):(kind!=Kind::Bar && kind!=Kind::Window && kind!=Kind::Footer)) return 0;
+    const Node* ancestor=p;unsigned depth=0;
+    while(ancestor) {if(++depth>32) return 0;ancestor=find(ancestor->parent);}
+    if(kind==Kind::Bar || kind==Kind::Footer) for(const auto& n:nodes) if(n.kind==kind) return 0;
     Node n; n.id=next_id++; n.kind=kind; n.parent=parent; n.text=text;
     if(kind==Kind::Window) { n.minimum={180,120}; n.rect={.2F,.2F,.4F,.4F}; }
     if(kind==Kind::Panel) n.rect={0,0,1,1};
@@ -47,24 +50,25 @@ bool Document::validate(std::string& error) const {
     const auto size=[&](Size s,float lo,float hi){return scalar(s.x,lo,hi)&&scalar(s.y,lo,hi);};
     if(nodes.empty()||nodes.size()>4096||!size(window_minimum,300,8192)||!scalar(default_rounding,0,256)||docking.size()>1048576) return fail("Nieprawidłowe ustawienia HUD-u");
     std::size_t budget=docking.size()*2;
-    std::set<Id> ids; Id maximum{}; int bars=0, scenes=0;
+    std::set<Id> ids; Id maximum{}; int bars=0, scenes=0, footers=0;
     for(const auto& n:nodes) {
         if(!n.id || !ids.insert(n.id).second) return fail("Powtórzony identyfikator");
         budget+=512+2*(n.text.size()+n.action.size()+n.builtin.size()+n.value.size());
         if(budget>2097152) return fail("HUD przekracza limit rozmiaru pliku");
         maximum=std::max(maximum,n.id);
-        if(n.kind<Kind::Bar || n.kind>Kind::List || n.dock<Dock::Floating || n.dock>Dock::Bottom) return fail("Nieznany typ elementu");
+        if(n.kind<Kind::Bar || n.kind>Kind::Footer || n.dock<Dock::Floating || n.dock>Dock::Bottom) return fail("Nieznany typ elementu");
         if(n.kind==Kind::Bar) ++bars;
+        if(n.kind==Kind::Footer) ++footers;
         if(n.builtin=="scene") ++scenes;
         if(n.text.size()>1024||n.action.size()>128||n.builtin.size()>64||n.value.size()>4096) return fail("Zbyt długi tekst");
         if(!size(n.minimum,1,8192)||!size(n.button_minimum,1,2048)||!size(n.gap,0,256)||!size(n.padding,0,256)||!scalar(n.rounding,0,256)) return fail("Nieprawidłowe rozmiary");
         if(!scalar(n.rect.x,0,1)||!scalar(n.rect.y,0,1)||!scalar(n.rect.w,.01F,1)||!scalar(n.rect.h,.01F,1)) return fail("Nieprawidłowy obszar względny");
         if(n.parent) { const auto* p=find(n.parent); if(!p||!accepts(p->kind,n.kind)) return fail("Niedozwolony rodzic elementu"); }
-        else if(n.kind!=Kind::Bar && n.kind!=Kind::Window) return fail("Element bez kontenera");
+        else if(n.kind!=Kind::Bar && n.kind!=Kind::Window && n.kind!=Kind::Footer) return fail("Element bez kontenera");
         const Node* p=&n; unsigned depth=0;
         while(p->parent) { if(++depth>32) return fail("Cykl lub zbyt głębokie menu"); p=find(p->parent); if(!p) return fail("Brak rodzica"); }
     }
-    if(bars!=1||scenes>1||next_id<=maximum) return fail("Nieprawidłowy pasek, widok sceny lub licznik ID");
+    if(bars!=1||footers>1||scenes>1||next_id<=maximum) return fail("Nieprawidłowy pasek, widok sceny lub licznik ID");
     error.clear(); return true;
 }
 Document defaults() {
@@ -97,6 +101,8 @@ Document defaults() {
     window("Notatki","notes",Dock::Bottom,{.19F,.7F,.59F,.3F});
     window("Renderer","renderer",Dock::Bottom,{.19F,.7F,.59F,.3F});
     window("Ustawienia","settings",Dock::Bottom,{.19F,.7F,.59F,.3F},false);
+    const auto footer=d.add(Kind::Footer,0,"{status} | {objects} obiektów | {fps} FPS | {limit}");
+    d.find(footer)->minimum={1,28};
     return d;
 }
 bool load(const std::filesystem::path& path,Document& out,std::string& error) {

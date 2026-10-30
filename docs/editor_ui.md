@@ -7,7 +7,7 @@
   krawędzi/innej zakładce. Separatory zmieniają rozmiary paneli.
 - Zasoby, Notatki i Renderer są dodatkowymi zakładkami dolnego obszaru.
 - Menu **Widok** przywraca zamknięte panele; **Przywróć układ** resetuje docking.
-- Układ zapisuje się w `editor_layout.ini` w katalogu roboczym. Nie używamy
+- Projektant zapisuje układ w `editor_hud.layout` obok EXE (patrz niżej). Nie używamy
   wielookienkowych platform viewports: wszystkie panele pozostają w jednym HWND
   i na jednym docelowym obrazie Vulkan.
 
@@ -86,3 +86,76 @@ ImGui: hit-test paska używa wyłącznie wcześniej wyliczonego prostokąta.
 Przy ręcznym teście Windows sprawdź dodatkowo przeciąganie/dwuklik paska,
 resize wszystkich krawędzi, maksymalizację przy pasku zadań i na dodatkowym
 monitorze oraz zamknięcie podczas aktywnej pracy GPU.
+
+## Projektant `editor_hud.exe`
+
+Oba EXE korzystają z **tego samego frontendu i renderera Vulkan**. Projektant
+zaczyna od pełnego domyślnego interfejsu: menu, scena, hierarchia, inspektor,
+konsola, zasoby, notatki, renderer i ustawienia. Przełączniki ruch/obrót/skala
+nad sceną są zwykłymi edytowalnymi przyciskami dokumentu. Dynamiczna zawartość
+narzędzi (np. encje i logi) pozostaje wbudowaną funkcjonalnością paneli, a nie
+kopią danych sceny w pliku HUD.
+
+1. Uruchom `editor_hud.exe`, zbudowany obok `engine_editor.exe` i `engine.dll`.
+2. LPM zaznacza element podglądu; drzewo **HUD / Właściwości** pozwala wybrać
+   także ukryte okna, menu i zagnieżdżone listy.
+3. PPM otwiera menu kontekstowe. Pierwszą pozycją jest **Dodaj okno**. Podmenu
+   **Dodaj** zawiera elementy dozwolone w danym kontenerze. **Przycisk** jest
+   dostępny tylko po trafieniu w panel, nie na pustym obszarze ani nagłówku
+   okna. Do pustego okna najpierw dodaj panel. Elementy list/menu dodaje się
+   również przez **Dodaj pozycję listy** we właściwościach listy.
+4. W panelu **Layout** ustaw odstęp przycisków X/Y, odstęp od krawędzi X/Y oraz
+   minimalną wielkość przycisków. Przyciski zawijają się do następnego wiersza.
+   Minimalna wielkość pojedynczego przycisku jest dostępna w jego ustawieniach.
+5. **Ustawienia panelu i okna**, na dole menu PPM, udostępniają minima i
+   zaokrąglenia. Wspólne zaokrąglenie to domyślnie **10 px**: jego zmiana działa
+   na wszystkie elementy z zaznaczonym dziedziczeniem. Odznacz dziedziczenie,
+   aby ustawić własny promień, lub wyłącz zaokrąglenia całkowicie.
+6. Rozmiary paneli można określać jako część dostępnego obszaru X/Y. Okna
+   zadokowane skalują się z obszarem roboczym; odpięte zapamiętują pozycję i
+   rozmiar względem niego. Minima chronią zawartość, a przewijanie obsługuje
+   kontenery z większą liczbą elementów. Minimum głównego okna ustaw po wybraniu
+   **Całe okno aplikacji**.
+7. Przycisk może wywołać funkcję z rejestru (zapis sceny, narzędzia, kamera,
+   prymitywy, ustawienia) albo stać się **Wysuwaną listą**. Listy mogą zawierać
+   kolejne listy; podmenu otwierają się po najechaniu w prawo. Przypisana funkcja
+   listy jest jej pierwszą pozycją **Uruchom**. Nie wykonujemy kodu z pliku HUD.
+8. Nowe okna pojawiają się automatycznie w domyślnym menu **Widok**. Można zmienić
+   etykietę tego menu, nie tracąc jego powiązania z oknami.
+Pasek stanu również jest elementem dokumentu: wybierz go w drzewie, zmień
+wysokość/tekst lub ukryj. Dostępne znaczniki: `{status}`, `{objects}`, `{fps}`,
+`{limit}`. Po usunięciu można go odtworzyć we właściwościach całego okna.
+
+9. **Zapisz HUD / Ctrl+S** zapisuje `editor_hud.layout` **obok EXE**, niezależnie
+   od katalogu roboczego. `engine_editor.exe` odczytuje go przy starcie. Oba EXE
+   muszą znajdować się w tym samym katalogu, by używać tego samego pliku.
+   Runtime nie nadpisuje projektu przy zamykaniu. Zmiany dokowania w runtime są
+   sesyjne; zapisywanie projektu należy do projektanta.
+
+Domyślnie podgląd nie wykonuje funkcji przycisków ani nie manipuluje sceną.
+**Interaktywny podgląd** włącza funkcje narzędzi (ruch kamery myszą nadal jest
+wyłączony w projektancie, ponieważ PPM służy do edycji HUD-u). Zamknięcie
+projektanta z niezapisanymi zmianami wymaga zapisu, odrzucenia lub anulowania.
+Przyciski minimalizacji, maksymalizacji i zamknięcia są stałymi kontrolkami
+aplikacji poza dokumentem: nie można ich usunąć ani przypisać innej funkcji.
+
+Plik ma wersjonowany format tekstowy `STUDIO_HUD 1`, stabilne identyfikatory,
+walidację rodziców/cykli, ograniczenie głębokości do 32 i rozmiaru do 2 MiB.
+Zawiera też stan dokowania. Zapis najpierw tworzy plik tymczasowy, następnie
+atomowo zastępuje poprzedni; błędne dane nie zastępują dobrego projektu.
+Brakujący lub uszkodzony plik powoduje użycie wbudowanego HUD-u. Błąd odczytu
+istniejącego pliku trafia do logu; błąd zapisu jest widoczny w projektancie.
+Stary `editor_layout.ini` nie jest już automatycznie odczytywany.
+
+### Siatka i testy
+
+Krok siatki jest kwantyzowany wyłącznie według odległości kamery od celu
+(zoomu), z tolerancją na błędy zmiennoprzecinkowe obrotu. Obrót kamery zmienia
+jedynie obszar pokrycia i projekcję perspektywiczną, nie odstęp linii w świecie.
+
+Testy **nie budują się domyślnie**. Do weryfikacji deweloperskiej użyj
+`-DBUILD_TESTING=ON`; CI włącza tę opcję jawnie. W istniejącym katalogu build
+z zapamiętanym `BUILD_TESTING=ON` podaj `-DBUILD_TESTING=OFF`.
+`hud_tests` sprawdza zapis/odczyt, walidację, zagnieżdżone listy i stały krok
+siatki podczas obrotu; Windows `editor_state_tests` renderuje klatki obu trybów
+bez GPU, sprawdza zaznaczanie podglądu oraz obecność sceny i własnych okien.

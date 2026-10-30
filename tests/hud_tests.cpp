@@ -37,6 +37,10 @@ int main() {
     broken=d;broken.find(w)->rect.w=0;assert(!save(path,broken,error));
     assert(load(path,read,error)); // A failed save never destroys the previous document.
     d.erase(list);assert(!d.find(list)&&!d.find(nested)&&!d.find(leaf));assert(d.find(button));
+    Document deep=defaults();auto deep_parent=deep.add(Kind::List,deep.nodes.front().id,"0");
+    for(int i=0;i<31;++i){deep_parent=deep.add(Kind::List,deep_parent,"Nested");assert(deep_parent);}
+    assert(!deep.add(Kind::List,deep_parent,"Too deep"));assert(deep.validate(error));
+    assert(!deep.add(Kind::Footer,0,"duplicate"));
     d.erase(bar);assert(d.find(bar));d.erase(w);assert(!d.find(panel));assert(d.validate(error));
     {std::ofstream out(path);out<<"STUDIO_HUD 99\n";}assert(!load(path,read,error));
     {std::ofstream out(path);out<<"STUDIO_HUD 1\n1 900 600 10 999999999\n";}assert(!load(path,read,error));

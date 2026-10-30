@@ -11,15 +11,16 @@
 namespace editor {
 namespace {
 using namespace engine::hud;
-constexpr float title_height=40,footer_height=28;
+constexpr float title_height=40;
 constexpr const char* actions[]{"","scene.save","settings","camera.reset","camera.frame","tool.move","tool.rotate","tool.scale",
     "object.cube","object.sphere","object.cylinder","object.plane","object.circle","object.square","layout.reset","app.close"};
 struct Deferred { Kind kind{Kind::Panel};Id parent{},erase{};bool add{}; } pending;
 ImVec2 last_canvas{};
+int hit_priority{};
 float radius(const Node& n) {return n.rounded?(n.shared_rounding?app().hud.default_rounding:n.rounding):0;}
 const char* kind_name(Kind k) {
     switch(k) {case Kind::Bar:return "Pasek górny";case Kind::Window:return "Okno";case Kind::Panel:return "Panel";
-    case Kind::Button:return "Przycisk";case Kind::Input:return "Wpisywarka";case Kind::Text:return "Tekst";case Kind::List:return "Lista";}
+    case Kind::Button:return "Przycisk";case Kind::Input:return "Wpisywarka";case Kind::Text:return "Tekst";case Kind::List:return "Lista";case Kind::Footer:return "Pasek stanu";}
     return "?";
 }
 void change(bool changed) {if(changed) app().hud_dirty=true;}
@@ -57,18 +58,23 @@ void button_properties(Node& n) {
             for(auto action:actions) if(ImGui::Selectable(*action?action:"Brak",n.action==action)) {n.action=action;app().hud_dirty=true;}
             ImGui::EndCombo();
         }
+        if(n.kind==Kind::List && ImGui::Button("Dodaj pozycję listy"))pending={Kind::Button,n.id,0,true};
         if(n.kind==Kind::List) ImGui::TextWrapped("Lista otwiera podmenu. Jej funkcja jest dostępna jako pierwsza pozycja Uruchom.");
     }
     rounding(n);
 }
-void container_properties(Node& n) {
+void container_properties(Node& n,bool menu=false) {
     size_edit("Minimum panelu / okna",n.minimum,1,8192);
-    rounding(n);
+    if(menu) {if(ImGui::BeginMenu("Zaokrąglenie")){rounding(n);ImGui::EndMenu();}}
+    else rounding(n);
 }
 void hit(Id id,Id panel,Id window) {
     auto& g=app();
     if(!g.hud_designer) return;
-    g.hud_hit=id;g.hud_hit_panel=panel;g.hud_hit_window=window;
+    const auto* current=ImGui::GetCurrentWindow();
+    const int priority=(current && (current->Flags&ImGuiWindowFlags_Popup))?8:(panel?4:window?3:2);
+    if(priority<hit_priority)return;
+    hit_priority=priority;g.hud_hit=id;g.hud_hit_panel=panel;g.hud_hit_window=window;
 }
 void item_hit(const Node& n,Id panel,Id window) {
     if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled|ImGuiHoveredFlags_AllowWhenBlockedByPopup)) hit(n.id,panel,window);
@@ -86,6 +92,10 @@ void menu_node(Node& n,Id window) {
     const auto spacing=ImGui::GetStyle().ItemSpacing;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{spacing.x,std::max(spacing.y,n.minimum.y-ImGui::GetFontSize())});
     if(n.kind==Kind::List) {
+        float width=n.minimum.x;
+        for(const auto& child:g.hud.nodes)if(child.parent==n.id && child.visible)width=std::max(width,child.minimum.x);
+        ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding,radius(n));
+        ImGui::SetNextWindowSizeConstraints({width,0},{FLT_MAX,FLT_MAX});
         const bool open=ImGui::BeginMenu(n.text.c_str(),n.enabled);item_hit(n,0,window);
         if(open) {
             if(!n.action.empty() && ImGui::MenuItem("Uruchom")) execute(n);
@@ -98,6 +108,7 @@ void menu_node(Node& n,Id window) {
             }
             menu_children(n.id,window);ImGui::EndMenu();
         }
+        ImGui::PopStyleVar();
     } else if(n.kind==Kind::Button) {
         if(ImGui::MenuItem(n.text.c_str(),nullptr,false,n.enabled)) execute(n);
         item_hit(n,0,window);
@@ -118,7 +129,7 @@ void chrome() {
         // Reserve immutable native controls. Narrow windows get a scrollable
         // overflow popup, rather than allowing project menus over the controls.
         if(bar && bar->visible) {
-            if(ImGui::IsWindowHovered()) hit(bar->id,0,0);
+            if(ImGui::IsWindowHovered() && ImGui::GetMousePos().x<g.width-146) hit(bar->id,0,0);
             const float right=static_cast<float>(g.width)-160;
             bool overflow=false;
             for(auto& n:g.hud.nodes) if(n.parent==bar->id && n.visible) {
@@ -161,11 +172,15 @@ void widget(Node& n,Id panel,Id window,ImVec2 size) {
         else if(n.kind==Kind::List) {
             if(ImGui::Button(n.text.c_str(),size)) {if(design())g.hud_selected=n.id;ImGui::OpenPopup("##list");}
             item_hit(n,panel,window);
-            ImGui::SetNextWindowSizeConstraints({n.minimum.x,0},{FLT_MAX,FLT_MAX});
+            float width=n.minimum.x;
+            for(const auto& child:g.hud.nodes)if(child.parent==n.id && child.visible)width=std::max(width,child.minimum.x);
+            ImGui::SetNextWindowSizeConstraints({width,0},{FLT_MAX,FLT_MAX});
+            ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding,radius(n));
             if(ImGui::BeginPopup("##list")) {
                 if(!n.action.empty() && ImGui::MenuItem("Uruchom")) execute(n);
                 menu_children(n.id,window);ImGui::EndPopup();
             }
+            ImGui::PopStyleVar();
         } else if(n.kind==Kind::Input) {
             auto [it,inserted]=g.hud_inputs.try_emplace(n.id);
             if(inserted) std::snprintf(it->second.data(),it->second.size(),"%s",n.value.c_str());
@@ -287,6 +302,8 @@ void inspector(float top,float height) {
     if(!n) {
         size_edit("Minimum okna aplikacji",g.hud.window_minimum,300,8192);
         change(ImGui::SliderFloat("Podstawowe zaokrąglenie",&g.hud.default_rounding,0,100,"%.0f px"));
+        bool status=false;for(const auto& c:g.hud.nodes)status|=c.kind==Kind::Footer;
+        if(!status && ImGui::Button("Dodaj pasek stanu"))pending={Kind::Footer,0,0,true};
     } else {
         ImGui::PushID(static_cast<int>(n->id));ImGui::Text("ID: %u / %s",n->id,kind_name(n->kind));
         text_edit("Tekst / nazwa",n->text);change(ImGui::Checkbox("Początkowo widoczny",&n->visible));
@@ -298,6 +315,9 @@ void inspector(float top,float height) {
                 if(ImGui::SliderFloat2("Część obszaru X / Y",fractions,.05F,1)) {n->rect.w=fractions[0];n->rect.h=fractions[1];g.hud_dirty=true;}
                 if(!n->builtin.empty())ImGui::TextWrapped("Wbudowana zawartość: %s (funkcjonalność silnika)",n->builtin.c_str());
             }
+        } else if(n->kind==Kind::Footer) {
+            change(ImGui::SliderFloat("Wysokość paska",&n->minimum.y,20,100,"%.0f px"));
+            ImGui::TextWrapped("Znaczniki: {status}, {objects}, {fps}, {limit}. Pasek jest częścią zapisanego HUD-u.");
         } else if(n->kind!=Kind::Bar) button_properties(*n);
         if(n->kind==Kind::Input) {text_edit("Tekst początkowy",n->value);g.hud_inputs.erase(n->id);}
         if(n->kind!=Kind::Bar && ImGui::Button("Usuń element i zawartość"))pending.erase=n->id;
@@ -317,14 +337,15 @@ void context_menu(ImVec2 canvas) {
     if(ImGui::MenuItem("Dodaj okno"))pending={Kind::Window,0,0,true};
     if(ImGui::BeginMenu("Dodaj")) {
         if(window && ImGui::MenuItem("Panel"))pending={Kind::Panel,window->id,0,true};
-        // No button entry at all outside a panel/list/bar, not just disabled.
         const bool menu=n && (n->kind==Kind::List || n->kind==Kind::Bar);
-        if(panel || menu) {
-            const Id target=menu?n->id:panel->id;
-            if((panel || (n && n->kind==Kind::List)) && ImGui::MenuItem("Przycisk"))pending={Kind::Button,target,0,true};
+        if(panel || menu || window) {
+            const Id target=menu?n->id:panel?panel->id:window->id;
+            // The Button entry is absent unless the hit belongs to a panel.
+            // Menu lists also have an explicit Add list item in Properties.
+            if(panel && ImGui::MenuItem("Przycisk"))pending={Kind::Button,target,0,true};
             if(ImGui::MenuItem("Lista"))pending={Kind::List,target,0,true};
             if(ImGui::MenuItem("Tekst"))pending={Kind::Text,target,0,true};
-            if(panel && ImGui::MenuItem("Wpisywarka"))pending={Kind::Input,panel->id,0,true};
+            if(!menu && ImGui::MenuItem("Wpisywarka"))pending={Kind::Input,target,0,true};
         }
         ImGui::EndMenu();
     }
@@ -332,11 +353,18 @@ void context_menu(ImVec2 canvas) {
     if(n && (n->kind==Kind::Button || n->kind==Kind::List) && ImGui::BeginMenu("Ustawienia przycisku / listy")) {button_properties(*n);ImGui::EndMenu();}
     ImGui::Separator();
     if((panel || window) && ImGui::BeginMenu("Ustawienia panelu i okna")) {
-        if(panel && ImGui::BeginMenu("Panel")) {container_properties(*panel);ImGui::EndMenu();}
-        if(window && ImGui::BeginMenu("Okno")) {container_properties(*window);ImGui::EndMenu();}
+        if(panel && ImGui::BeginMenu("Panel")) {container_properties(*panel,true);ImGui::EndMenu();}
+        if(window && ImGui::BeginMenu("Okno")) {container_properties(*window,true);ImGui::EndMenu();}
         ImGui::EndMenu();
     }
     ImGui::EndPopup();
+}
+void reload_project() {
+    auto& g=app();
+        Document candidate;std::string error;
+        if(load(g.hud_path,candidate,error)) {g.hud=std::move(candidate);g.hud_inputs.clear();g.hud_dirty=false;g.hud_selected=0;g.hud_reset=true;
+            if(!g.hud.docking.empty()) {ImGui::LoadIniSettingsFromMemory(g.hud.docking.c_str());g.hud_reset=false;}}
+        else g.hud_message=error;
 }
 void toolbar() {
     auto& g=app();
@@ -344,10 +372,13 @@ void toolbar() {
         ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoScrollbar);
     if(ImGui::Button("Zapisz HUD (Ctrl+S)"))g.hud_save_requested=true;
     ImGui::SameLine();if(ImGui::Button("Wczytaj")) {
-        Document candidate;std::string error;
-        if(load(g.hud_path,candidate,error)) {g.hud=std::move(candidate);g.hud_inputs.clear();g.hud_dirty=false;g.hud_selected=0;g.hud_reset=true;
-            if(!g.hud.docking.empty()) {ImGui::LoadIniSettingsFromMemory(g.hud.docking.c_str());g.hud_reset=false;}}
-        else g.hud_message=error;
+        if(g.hud_dirty)ImGui::OpenPopup("Wczytać zapisany HUD?");else reload_project();
+    }
+    if(ImGui::BeginPopup("Wczytać zapisany HUD?")) {
+        ImGui::TextUnformatted("Odrzucić niezapisane zmiany i wczytać plik?");
+        if(ImGui::Button("Wczytaj i odrzuć zmiany")){reload_project();ImGui::CloseCurrentPopup();}
+        ImGui::SameLine();if(ImGui::Button("Anuluj"))ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
     }
     ImGui::SameLine();change(ImGui::Checkbox("Interaktywny podgląd",&g.hud_preview));
     ImGui::SameLine();ImGui::Checkbox("Właściwości",&g.hud_inspector);
@@ -358,6 +389,39 @@ void toolbar() {
         ImGui::EndPopup();
     }
     ImGui::End();
+}
+Node* project_footer() {for(auto& n:app().hud.nodes)if(n.kind==Kind::Footer && n.visible)return &n;return nullptr;}
+std::string footer_text(const Node& node) {
+    auto& g=app();std::string text=node.text;
+    const auto replace=[&](const char* key,const std::string& value) {
+        std::size_t pos=0;while((pos=text.find(key,pos))!=std::string::npos){text.replace(pos,std::strlen(key),value);pos+=value.size();}
+    };
+    char fps[32]{};std::snprintf(fps,sizeof(fps),"%.1f",static_cast<double>(ImGui::GetIO().Framerate));
+    const int bytes=WideCharToMultiByte(CP_UTF8,0,g.status.c_str(),static_cast<int>(g.status.size()),nullptr,0,nullptr,nullptr);
+    std::string status(static_cast<std::size_t>(std::max(0,bytes)),'\0');
+    if(bytes)WideCharToMultiByte(CP_UTF8,0,g.status.c_str(),static_cast<int>(g.status.size()),status.data(),bytes,nullptr,nullptr);
+    replace("{objects}",std::to_string(g.scene.entity_count()));replace("{fps}",fps);
+    replace("{limit}",g.fps_limit?std::to_string(g.fps_limit)+" FPS":"unlimited");replace("{status}",status);
+    return text;
+}
+void footer() {
+    auto& g=app();
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{10,4});
+    if(g.hud_designer) {
+        ImGui::BeginViewportSideBar("##HUD_Designer_Status",ImGui::GetMainViewport(),ImGuiDir_Down,24,
+            ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoScrollbar);
+        ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+        ImGui::TextDisabled("%s%s | %s",g.hud_dirty?"* ":"","editor_hud.layout",g.hud_message.c_str());ImGui::End();
+    }
+    if(auto* node=project_footer()) {
+        ImGui::BeginViewportSideBar("##HUD_Project_Status",ImGui::GetMainViewport(),ImGuiDir_Down,std::clamp(node->minimum.y,20.0F,100.0F),
+            ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoScrollbar);
+        ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+        const auto text=footer_text(*node);ImGui::TextDisabled("%s",text.c_str());
+        if(ImGui::IsWindowHovered())hit(node->id,0,0);
+        ImGui::End();
+    }
+    ImGui::PopStyleVar();
 }
 void confirm_close() {
     auto& g=app();
@@ -378,7 +442,8 @@ void initialize_hud() {
     std::string error;
     if(!engine::hud::load(g.hud_path,g.hud,error)) {
         g.hud=engine::hud::defaults();
-        if(std::filesystem::exists(g.hud_path)) {g.hud_message="Nie wczytano HUD: "+error;LOG_WARN("hud","%s",g.hud_message.c_str());}
+        std::error_code ec;
+        if(std::filesystem::exists(g.hud_path,ec)) {g.hud_message="Nie wczytano HUD: "+error;LOG_WARN("hud","%s",g.hud_message.c_str());}
     }
     g.hud_loaded=true;
 }
@@ -389,31 +454,35 @@ bool save_hud() {
     LOG_INFO("hud","Saved editor_hud.layout");return true;
 }
 void draw_document_ui() {
-    auto& g=app();g.hud_hit=g.hud_hit_panel=g.hud_hit_window=0;
+    auto& g=app();g.hud_hit=g.hud_hit_panel=g.hud_hit_window=0;hit_priority=0;
     chrome();
-    const float top=title_height+(g.hud_designer?34:0),height=std::max(1.0F,static_cast<float>(g.height)-top-footer_height);
+    auto* status=project_footer();
+    const float bottom=(status?std::clamp(status->minimum.y,20.0F,100.0F):0)+(g.hud_designer?24:0);
+    const float top=title_height+(g.hud_designer?34:0),height=std::max(1.0F,static_cast<float>(g.height)-top-bottom);
     const float width=std::max(1.0F,static_cast<float>(g.width)-(g.hud_designer&&g.hud_inspector?330:0));
     if(g.hud_designer) {toolbar();if(g.hud_inspector)inspector(top,height);}
     windows({0,top},{width,height});g.docking_initialized=true;
+    footer();
     if(g.hud_designer) {
         context_menu({width,height});
         if(pending.erase) {g.hud.erase(pending.erase);g.hud_inputs.clear();g.hud_selected=0;g.hud_dirty=true;}
         if(pending.add) {
-            auto id=g.hud.add(pending.kind,pending.parent,kind_name(pending.kind));
-            if(id) {g.hud_selected=id;g.hud_dirty=true;}
+            auto id=g.hud.add(pending.kind,pending.parent,std::string(kind_name(pending.kind))+" "+std::to_string(g.hud.next_id));
+            if(id) {
+                g.hud_selected=id;g.hud_dirty=true;
+                if(pending.kind==Kind::Footer){auto* n=g.hud.find(id);n->text="{status} | {objects} obiektów | {fps} FPS";n->minimum={1,28};}
+                if(pending.kind==Kind::Window) {
+                    bool view=false;Id bar{};
+                    for(const auto& n:g.hud.nodes){view|=n.builtin=="view.windows";if(n.kind==Kind::Bar)bar=n.id;}
+                    if(!view){auto menu=g.hud.add(Kind::List,bar,"Widok");if(auto* n=g.hud.find(menu))n->builtin="view.windows";}
+                }
+            }
         }
         pending={};
         if(ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S,false))g.hud_save_requested=true;
         if(g.hud_save_requested){save_hud();g.hud_save_requested=false;}
         confirm_close();
     } else editor_shortcuts();
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{10,4});
-    ImGui::BeginViewportSideBar("##HUD_Status",ImGui::GetMainViewport(),ImGuiDir_Down,footer_height,
-        ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoScrollbar);
-    ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
-    if(g.hud_designer)ImGui::TextDisabled("%s%s | %s",g.hud_dirty?"* ":"","editor_hud.layout",g.hud_message.c_str());
-    else ImGui::TextDisabled("%zu obiektów | %.1f FPS | HUD: editor_hud.layout",g.scene.entity_count(),static_cast<double>(ImGui::GetIO().Framerate));
-    ImGui::End();ImGui::PopStyleVar();
     g.menu_open=ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel);
 }
 }

@@ -7,7 +7,7 @@
 
 namespace engine::hud {
 using Id=std::uint32_t;
-enum class Kind { Bar, Window, Panel, Button, Input, Text, List };
+enum class Kind { Bar, Window, Panel, Button, Input, Text, List, Footer };
 enum class Dock { Floating, Left, Center, Right, Bottom };
 struct Size { float x{},y{}; };
 struct Rect { float x{},y{},w{1},h{1}; }; // Relative to the design canvas, not desktop pixels.
