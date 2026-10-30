@@ -16,7 +16,8 @@ if(MSVC)
     # each configuration (/MD Release, /MDd Debug), never mix /MT and /MD.
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     # Source files/tests contain UTF-8 Polish text. Do not pass C++ flags to NASM.
-    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/utf-8>")
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/utf-8>"
+                        "$<$<COMPILE_LANGUAGE:CXX>:/EHsc>")
 endif()
 
 # Vulkan SDK supplies headers/loader and glslc (or glslangValidator).

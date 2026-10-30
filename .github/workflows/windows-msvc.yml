@@ -39,7 +39,7 @@ jobs:
       - name: Configure Visual Studio x64
         shell: pwsh
         run: |
-          cmake -S . -B build-msvc -A x64 -DBUILD_TESTING=ON -DENGINE_USE_ASM=ON -DCMAKE_CXX_FLAGS=/WX "-DCMAKE_ASM_NASM_COMPILER=${{ steps.msys2.outputs.msys2-location }}/usr/bin/nasm.exe" -DVulkan_INCLUDE_DIR=${{ github.workspace }}/deps/include -DVulkan_LIBRARY=${{ github.workspace }}/deps/vulkan-1.lib 2>&1 | Tee-Object -FilePath configure.log
+          cmake -S . -B build-msvc -A x64 -DBUILD_TESTING=ON -DENGINE_USE_ASM=ON -DCMAKE_COMPILE_WARNING_AS_ERROR=ON "-DCMAKE_ASM_NASM_COMPILER=${{ steps.msys2.outputs.msys2-location }}/usr/bin/nasm.exe" -DVulkan_INCLUDE_DIR=${{ github.workspace }}/deps/include -DVulkan_LIBRARY=${{ github.workspace }}/deps/vulkan-1.lib 2>&1 | Tee-Object -FilePath configure.log
           if ($LASTEXITCODE -ne 0) {
             $code = $LASTEXITCODE
             $details = ((Get-Content configure.log | Select-Object -Last 100) -join '%0A')
