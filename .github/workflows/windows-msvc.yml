@@ -62,8 +62,13 @@ jobs:
         shell: pwsh
         run: |
           foreach ($config in 'Release', 'Debug') {
-            ctest --test-dir build-msvc -C $config -R '^(platform_tests|geometry_tests|geometry_cache_tests|bindings_tests|hud_tests|editor_startup_tests|editor_state_tests|input_tests|render_worker_tests|camera_smoothing_tests|log_tests|docking_tests)$' --output-on-failure --no-tests=error
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            ctest --test-dir build-msvc -C $config -R '^(platform_tests|geometry_tests|geometry_cache_tests|bindings_tests|hud_tests|editor_startup_tests|editor_state_tests|input_tests|render_worker_tests|camera_smoothing_tests|log_tests|docking_tests)$' --output-on-failure --no-tests=error 2>&1 | Tee-Object -FilePath "tests-$config.log"
+            if ($LASTEXITCODE -ne 0) {
+              $code = $LASTEXITCODE
+              $details = ((Get-Content "tests-$config.log" | Select-Object -Last 100) -join '%0A')
+              Write-Output "::error::$details"
+              exit $code
+            }
           }
       - name: Install software Vulkan ICD for real Windows startup tests
         shell: pwsh

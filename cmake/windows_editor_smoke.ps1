@@ -22,6 +22,15 @@ function Test-Editor([string]$name, [string[]]$arguments) {
         if ($p.ExitCode -ne 0) { throw "$name failed with exit code $($p.ExitCode)" }
         $log = Join-Path $case ($name.Replace('.exe','.log'))
         if (!(Select-String -Path $log -SimpleMatch 'Vulkan window smoke test passed' -Quiet)) { throw "$name did not finish three Vulkan frames" }
+    } catch {
+        $details = "$name $($arguments -join ' '): $($_.Exception.Message)`n"
+        foreach ($file in (Get-ChildItem $case -Filter '*.log')) {
+            $details += "--- $($file.Name) ---`n" + ((Get-Content $file -Tail 60) -join "`n") + "`n"
+        }
+        # Keep actionable startup/fatal diagnostics in the check annotations too.
+        $details = $details.Replace('%','%25').Replace("`r",'%0D').Replace("`n",'%0A')
+        Write-Output "::error::$details"
+        throw
     } finally {
         Get-ChildItem $case -Filter '*.log' | ForEach-Object { Write-Host "--- $($_.Name) ---"; Get-Content $_ }
     }
