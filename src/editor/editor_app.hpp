@@ -53,9 +53,10 @@ struct App {
     bool show_console{true}, show_resources{true}, show_notes{true}, show_renderer{true};
     bool show_settings{}, focus_settings{}, settings_hovered{};
     std::vector<engine::hud::Binding> live_bindings;
-    bool bindings_initialized{}, binding_capture_armed{};
-    int binding_capture{-1}, binding_capture_frame{}, binding_consumed_frame{-1};
+    bool bindings_initialized{}, binding_capture_armed{}, binding_scroll_last{};
+    int binding_capture{-1}, binding_capture_frame{}, binding_consumed_frame{-1}, binding_pointer_frame{-1};
     std::string binding_message;
+    int settings_tab{-1};
     ImGuiTextFilter console_filter;
     bool console_levels[4]{true,true,true,true};
     bool console_auto_scroll{true};

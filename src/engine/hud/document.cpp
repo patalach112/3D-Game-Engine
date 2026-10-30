@@ -50,7 +50,7 @@ bool Document::validate(std::string& error) const {
     const auto scalar=[](float x,float lo,float hi){return std::isfinite(x)&&x>=lo&&x<=hi;};
     const auto size=[&](Size s,float lo,float hi){return scalar(s.x,lo,hi)&&scalar(s.y,lo,hi);};
     if(nodes.empty()||nodes.size()>4096||!size(window_minimum,300,8192)||!scalar(default_rounding,0,256)||docking.size()>1048576) return fail("Nieprawidłowe ustawienia HUD-u");
-    std::size_t budget=docking.size()*2;
+    std::size_t budget=docking.size()*2+bindings.size()*128;
     std::set<Id> ids; Id maximum{}; int bars=0, scenes=0, footers=0;
     for(const auto& n:nodes) {
         if(!n.id || !ids.insert(n.id).second) return fail("Powtórzony identyfikator");
@@ -126,6 +126,7 @@ bool load(const std::filesystem::path& path,Document& out,std::string& error) {
             d.bindings.clear();
             for(std::size_t i=0;i<total;++i){Binding b;if(!(f>>std::quoted(b.action)>>b.key>>b.modifiers)){error="Uszkodzony bind HUD";return false;}d.bindings.push_back(b);}
         }
+        if(!d.validate(error))return false;
         // Settings is application chrome now, never a deletable/dockable HUD node.
         std::vector<Id> legacy;
         for(auto& n:d.nodes)if(n.builtin=="settings"){n.builtin.clear();legacy.push_back(n.id);}

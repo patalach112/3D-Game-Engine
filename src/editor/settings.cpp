@@ -26,7 +26,7 @@ unsigned modifiers() {
 }
 std::vector<Binding>& editable() {return app().hud_designer?app().hud.bindings:app().live_bindings;}
 void changed() {
-    auto& g=app();
+    auto& g=app();g.binding_message.clear();
     if(g.hud_designer){g.hud_dirty=true;return;}
     std::string error;
     if(!save_bindings(g.hud_path.parent_path()/L"editor_bindings.cfg",bindings_fingerprint(g.hud.bindings),g.live_bindings,error)) {
@@ -78,7 +78,10 @@ void bindings_tab() {
             ImGui::TableSetupColumn(g.hud_designer?"Domyślne przypisanie (LPM)":"Przypisanie (LPM)",ImGuiTableColumnFlags_WidthStretch);
             if(!g.hud_designer)ImGui::TableSetupColumn("Domyślne",ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupScrollFreeze(0,1);ImGui::TableHeadersRow();
-            for(std::size_t i=0;i<list.size();++i) {
+            ImGuiListClipper clipper;clipper.Begin(static_cast<int>(list.size()),ImGui::GetFrameHeight()+ImGui::GetStyle().CellPadding.y*2);
+            if(g.binding_scroll_last && !list.empty())clipper.IncludeItemByIndex(static_cast<int>(list.size()-1));
+            while(clipper.Step())for(int row=clipper.DisplayStart;row<clipper.DisplayEnd;++row) {
+                const auto i=static_cast<std::size_t>(row);
                 ImGui::PushID(static_cast<int>(i));ImGui::TableNextRow();ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted(action_label(list[i].action));
                 if(ImGui::IsItemHovered()&&ImGui::IsMouseClicked(1)){context_row=static_cast<int>(i);context_clicked=true;}
@@ -89,17 +92,21 @@ void bindings_tab() {
                 ImGui::EndDisabled();
                 if(ImGui::IsItemHovered()&&ImGui::IsMouseClicked(1)){context_row=static_cast<int>(i);context_clicked=true;}
                 if(!g.hud_designer) {
-                    ImGui::TableSetColumnIndex(2);const Binding* def=nullptr;
-                    // Bindings are allowed to have multiple keys per function.
-                    std::size_t occurrence=0;for(std::size_t j=0;j<i;++j)if(list[j].action==list[i].action)++occurrence;
-                    for(const auto& b:g.hud.bindings)if(b.action==list[i].action){if(!occurrence){def=&b;break;}--occurrence;}
-                    const auto text=def?binding_label(*def):std::string("—");ImGui::TextDisabled("%s",text.c_str());
+                    ImGui::TableSetColumnIndex(2);std::string text;
+                    for(const auto& b:g.hud.bindings)if(!list[i].action.empty() && b.action==list[i].action) {
+                        if(!text.empty())text+=" / ";
+                        text+=binding_label(b);
+                    }
+                    if(text.empty())text="—";
+                    ImGui::TextDisabled("%s",text.c_str());
+                    ImGui::SetItemTooltip("%s",text.c_str());
                     if(ImGui::IsItemHovered()&&ImGui::IsMouseClicked(1)){context_row=static_cast<int>(i);context_clicked=true;}
                 }
                 // Include blank space in each table row, not only its text/button.
                 if(ImGui::IsMouseClicked(1)&&ImGui::IsWindowHovered()&&ImGui::GetMousePos().y>=ImGui::GetItemRectMin().y&&ImGui::GetMousePos().y<=ImGui::GetItemRectMax().y) {
                     context_row=static_cast<int>(i);context_clicked=true;
                 }
+                if(g.binding_scroll_last && i+1==list.size()){ImGui::SetScrollHereY(1);g.binding_scroll_last=false;}
                 ImGui::PopID();
             }
             ImGui::EndTable();
@@ -120,7 +127,7 @@ void bindings_tab() {
             }
             ImGui::EndMenu();
         }
-        if(ImGui::MenuItem("Dodaj binda",nullptr,false,list.size()<512)){list.push_back({});changed();}
+        if(ImGui::MenuItem("Dodaj binda",nullptr,false,list.size()<512)){list.push_back({});g.binding_scroll_last=true;changed();}
         if(ImGui::MenuItem("Usuń binda",nullptr,false,valid)){list.erase(list.begin()+selected);selected=-1;g.binding_capture=-1;changed();}
         ImGui::EndPopup();
     }
@@ -134,11 +141,12 @@ void graphics() {
     ImGui::BeginDisabled(unlimited);
     int value=g.fps_limit?g.fps_limit:60;
     if(ImGui::SliderInt("Limit FPS",&value,15,360)){g.fps_limit=value;g.next_frame={};}
+    ImGui::EndDisabled();ImGui::TextDisabled("Presety:");
     for(int preset:{30,60,120,144,240,360}) {
         ImGui::SameLine();ImGui::PushID(preset);
         if(ImGui::SmallButton(std::to_string(preset).c_str())){g.fps_limit=preset;g.next_frame={};}ImGui::PopID();
     }
-    ImGui::EndDisabled();ImGui::BeginDisabled();
+    ImGui::BeginDisabled();
     if(ImGui::BeginCombo("Renderer","Vulkan")){ImGui::Selectable("Vulkan",true);ImGui::EndCombo();}ImGui::EndDisabled();
     ImGui::Text("%.1f FPS / %.3f ms na klatkę",static_cast<double>(ImGui::GetIO().Framerate),1000.0/static_cast<double>(std::max(1.0F,ImGui::GetIO().Framerate)));
     const auto stats=g.renderer.statistics();
@@ -173,7 +181,10 @@ void process_bindings() {
         const auto key=gui_key(b.key);
         // Mouse binds must not consume clicks in unrelated editor controls.
         if(b.key>=400 && (!g.viewport_visible||!scene_input_at(static_cast<int>(io.MousePos.x),static_cast<int>(io.MousePos.y))))continue;
-        if(key!=ImGuiKey_None&&ImGui::IsKeyPressed(key,false)){hud_action(b.action);break;}
+        if(key!=ImGuiKey_None&&ImGui::IsKeyPressed(key,false)) {
+            if(b.key>=400){g.binding_pointer_frame=ImGui::GetFrameCount();g.orbit.dragging=false;}
+            hud_action(b.action);break;
+        }
     }
 }
 void draw_settings_window() {
@@ -186,14 +197,14 @@ void draw_settings_window() {
     ImGui::SetNextWindowSizeConstraints({std::min(620.0F,static_cast<float>(g.width)),std::min(380.0F,static_cast<float>(g.height))},{static_cast<float>(g.width),static_cast<float>(g.height)});
     if(ImGui::Begin("Ustawienia",&g.show_settings,ImGuiWindowFlags_NoDocking|ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_NoSavedSettings)) {
         if(ImGui::BeginTabBar("##SettingsTabs")) {
-            if(ImGui::BeginTabItem("Podstawowe")) {
+            if(ImGui::BeginTabItem("Podstawowe",nullptr,g.settings_tab==0?ImGuiTabItemFlags_SetSelected:0)) {
                 ImGui::BeginDisabled();ImGui::Button("Pomoc");
                 if(ImGui::BeginCombo("Język","Polski")){ImGui::Selectable("Polski",true);ImGui::EndCombo();}ImGui::EndDisabled();
                 ImGui::TextDisabled("Na razie dostępny jest wyłącznie język polski.");ImGui::EndTabItem();
             }
-            if(ImGui::BeginTabItem("Grafika")){graphics();ImGui::EndTabItem();}
-            if(ImGui::BeginTabItem("Bindy")){bindings_tab();ImGui::EndTabItem();}
-            ImGui::EndTabBar();
+            if(ImGui::BeginTabItem("Grafika",nullptr,g.settings_tab==1?ImGuiTabItemFlags_SetSelected:0)){graphics();ImGui::EndTabItem();}
+            if(ImGui::BeginTabItem("Bindy",nullptr,g.settings_tab==2?ImGuiTabItemFlags_SetSelected:0)){bindings_tab();ImGui::EndTabItem();}
+            ImGui::EndTabBar();g.settings_tab=-1;
         }
     }
     g.settings_hovered=ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows|ImGuiHoveredFlags_AllowWhenBlockedByPopup);

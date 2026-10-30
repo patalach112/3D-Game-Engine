@@ -81,7 +81,7 @@ void item_hit(const Node& n,Id panel,Id window) {
 bool design() {return app().hud_designer && !app().hud_preview;}
 void execute(const Node& n) {
     auto& g=app();
-    if(n.action=="settings"){hud_action(n.action);return;}
+    if(n.action=="settings" || n.action=="settings.bindings" || n.action=="settings.graphics"){hud_action(n.action);return;}
     if(design()) g.hud_selected=n.id;
     else if(n.enabled) hud_action(n.action);
 }

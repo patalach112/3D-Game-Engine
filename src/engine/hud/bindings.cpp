@@ -15,7 +15,7 @@
 namespace engine::hud {
 namespace {
 constexpr Action registry[]{
-    {"","Brak funkcji"},{"scene.save","Zapisz scenę"},{"settings","Ustawienia"},
+    {"","Brak funkcji"},{"scene.save","Zapisz scenę"},{"settings","Ustawienia"},{"settings.bindings","Ustawienia: bindy"},{"settings.graphics","Ustawienia: grafika"},
     {"tool.move","Przesuwanie"},{"tool.rotate","Obracanie"},{"tool.scale","Skalowanie"},
     {"camera.reset","Reset kamery"},{"camera.frame","Wycentruj zaznaczony"},
     {"camera.front","Kamera: przód"},{"camera.top","Kamera: góra"},{"camera.side","Kamera: bok"},{"camera.iso","Kamera: izometryczna"},
@@ -88,7 +88,8 @@ bool load_bindings(const std::filesystem::path& path,std::uint64_t hash,std::vec
         if(!(f>>magic>>version>>source>>count)||magic!="STUDIO_BINDINGS"||version!=1||source!=hash||count>512){error="Inna wersja domyślnych bindów lub błędny plik";return false;}
         std::vector<Binding> list;list.reserve(count);
         for(std::size_t i=0;i<count;++i){Binding b;if(!(f>>std::quoted(b.action)>>b.key>>b.modifiers)){error="Uszkodzony bind";return false;}list.push_back(b);}
-        f>>std::ws;if(!f.eof()||!validate_bindings(list,error))return false;
+        f>>std::ws;if(!f.eof()){error="Dodatkowe dane po liście bindów";return false;}
+        if(!validate_bindings(list,error))return false;
         out=std::move(list);error.clear();return true;
     }catch(const std::exception& e){error=e.what();return false;}
 }

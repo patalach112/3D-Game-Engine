@@ -99,6 +99,10 @@ pozostają dostępne po jawnym `-DBUILD_TESTING=ON` (tak robi CI).
 Projektant pozwala edytować menu, okna, panele, przyciski, tekst, wpisywarki i
 zagnieżdżone listy, minima, odstępy oraz wspólne/własne zaokrąglenia.
 Minimalizacja/maksymalizacja/zamknięcie pozostają nieedytowalne.
+Ustawienia są osobnym, niedokowalnym oknem z zakładkami Podstawowe, Grafika
+oraz Bindy. W projektancie edytujesz domyślne bindy (bez wykonywania ich funkcji),
+a zwykły edytor zapisuje własne przypisania osobno w `editor_bindings.cfg`.
+Szczegóły i opis optymalizacji cache geometrii: [docs/editor_ui.md](docs/editor_ui.md).
 
 Jeśli jesteś już w `build`, odpowiednikiem jest `cmake ..`, następnie
 `cmake --build . --config Release` i `.\Release\engine_editor.exe`.

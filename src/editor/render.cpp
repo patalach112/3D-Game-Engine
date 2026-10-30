@@ -23,7 +23,7 @@ void render_frame(HWND hwnd) {
     const auto view=view_rect();
     const auto& io=ImGui::GetIO();
     const bool focused=GetForegroundWindow()==hwnd && !io.AppFocusLost;
-    const bool blocked=g.hud_designer || g.show_settings || !g.viewport_visible || ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel);
+    const bool blocked=g.hud_designer || g.show_settings || g.binding_pointer_frame==ImGui::GetFrameCount() || !g.viewport_visible || ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel);
     const engine::RenderViewport bounds{static_cast<int>(view.left),static_cast<int>(view.top),
         static_cast<int>(view.right-view.left),static_cast<int>(view.bottom-view.top)};
     const auto consume=[&](engine::OrbitInput input) {

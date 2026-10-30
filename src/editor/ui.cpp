@@ -401,7 +401,12 @@ void hud_action(const std::string& name) {
     else if(name=="object.square") add_primitive(engine::PrimitiveType::Square2D);
     else if(name=="layout.reset") g.hud_reset=true;
     else if(name=="app.close") PostMessageW(g.hwnd,WM_CLOSE,0,0);
-    else if(name=="settings") {g.show_settings=true;g.focus_settings=true;}
+    else if(name=="settings" || name=="settings.bindings" || name=="settings.graphics") {
+        g.show_settings=true;g.focus_settings=true;
+        if(name=="settings.bindings")g.settings_tab=2;
+        if(name=="settings.graphics")g.settings_tab=1;
+        g.orbit.dragging=false;g.drag_axis=-1;
+    }
     else if(name=="entity.duplicate") duplicate_entity();
     else if(name=="entity.delete") {
         if(g.selected){(void)g.scene.remove_entity(g.selected);g.selected=0;g.name_target=0;g.drag_axis=-1;g.status=L"Usunięto obiekt";}

@@ -9,7 +9,7 @@
 namespace engine::hud {
 // Stable, backend-independent codes. ASCII letters/digits retain their values.
 enum class Key : int {
-    None=0, Tab=256, Left, Right, Up, Down, PageUp, PageDown, Home, End,
+    Unassigned=0, Tab=256, Left, Right, Up, Down, PageUp, PageDown, Home, End,
     Insert, Delete, Backspace, Space, Enter, Escape, Minus, Equal, Comma, Period,
     Slash, Semicolon, Apostrophe, LeftBracket, RightBracket, Backslash, Grave,
     KeypadAdd, KeypadSubtract, KeypadEnter,

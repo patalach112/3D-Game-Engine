@@ -543,7 +543,7 @@ void VulkanRenderer::Impl::ensure_buffer(Buffer& buffer, VkDeviceSize size, VkBu
     check(vkDeviceWaitIdle(device),"Wait before growing buffer");
     const VkDeviceSize capacity=std::max({size,buffer.capacity*2,VkDeviceSize{4096}});
     destroy_buffer(buffer);
-    descriptors_dirty=true; // A recreated handle may reuse the same numeric value.
+    if(&buffer==&object_data || &buffer==&indirect)descriptors_dirty=true; // Recreated handles may reuse numeric values.
     VkBufferCreateInfo info{};
     info.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO; info.size=capacity;
     info.usage=usage; info.sharingMode=VK_SHARING_MODE_EXCLUSIVE;

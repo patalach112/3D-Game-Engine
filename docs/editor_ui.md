@@ -159,3 +159,77 @@ z zapamiętanym `BUILD_TESTING=ON` podaj `-DBUILD_TESTING=OFF`.
 `hud_tests` sprawdza zapis/odczyt, walidację, zagnieżdżone listy i stały krok
 siatki podczas obrotu; Windows `editor_state_tests` renderuje klatki obu trybów
 bez GPU, sprawdza zaznaczanie podglądu oraz obecność sceny i własnych okien.
+
+## Ustawienia i bindy
+
+**Ustawienia** są teraz osobnym, pływającym oknem aplikacji. Można je przesuwać,
+zmieniać rozmiar i zamykać przyciskiem X, ale nie dokować ani usuwać w projektancie
+HUD-u. Wejście jest dostępne w menu Plik oraz na stałym pasku narzędzi
+`editor_hud.exe`, również po usunięciu własnego menu projektu.
+
+Zakładki:
+- **Podstawowe** — nieaktywna Pomoc i wybór języka z samym Polskim (na razie szary).
+- **Grafika** — tryb bez limitu, limit FPS, presety; Vulkan jest szary i nie można
+  wybrać innego renderera. Zaawansowane zachowują siatkę, FOV i kolor tła.
+  Widać także FPS, czas klatki oraz statystyki przygotowania geometrii na CPU.
+- **Bindy** — na samej górze **Przywróć domyślne**. PPM w obszarze tabeli daje
+  dokładnie trzy pozycje: **Przypisz funkcję**, **Dodaj binda**, **Usuń binda**.
+  Kliknięcie wiersza prawym wybiera go do edycji; na pustym obszarze dostępne
+  jest dodawanie, bez ryzyka usunięcia wcześniej wskazanego wiersza.
+
+LPM w polu przypisania uruchamia przechwytywanie klawisza (także z Ctrl, Shift,
+Alt, Win) lub przycisku myszy. Klik rozpoczynający przypisywanie nie staje się
+samym bindem. Esc anuluje, **Wyczyść przypisanie** usuwa skrót. Konflikty są
+odrzucane z komunikatem — nie wywołujemy dwóch funkcji jednym skrótem.
+Kombinacje zastrzeżone przez Windows mogą nie trafić do aplikacji.
+
+W **editor_hud.exe** tabela edytuje *domyślne bindy projektu*, zapisane przyciskiem
+**Zapisz domyślne w HUD** lub zwykłym zapisem projektu. Projektant zawsze pokazuje
+te domyślne, nigdy osobiste nadpisania użytkownika. Żaden bind sceny nie wykonuje
+się w projektancie, również w interaktywnym podglądzie. Narzędziowy Ctrl+S służy
+nadal do zapisu HUD-u poza oknem ustawień. Przywracanie w projektancie przywraca
+fabryczny zestaw podstawowy.
+
+W **engine_editor.exe** domyślne pochodzą z projektu, a własne zmiany zapisują się
+w `editor_bindings.cfg` obok EXE. **Przywróć domyślne** przywraca ustawienia autora
+HUD-u. Plik nadpisań jest związany z odciskiem zestawu domyślnego — zmiana domyślnych
+w projektancie powoduje pominięcie nieaktualnych nadpisań po restarcie edytora.
+Skróty nie uruchamiają się podczas wpisywania tekstu, edytowania pola, w menu
+kontekstowym ani w otwartych ustawieniach. Stałe gesty orbitowania i kółka kamery
+pozostają sterowaniem viewportu, a nie funkcjami jednorazowych bindów.
+
+Zestaw podstawowy zachowuje Ctrl+S, Ctrl+D, Q/W/E, F, N, Delete, strzałki oraz
+zoom +/−. Nowe funkcje to m.in. reset transformacji (**Ctrl+R**), przełączanie
+siatki (**G**), widoki kamery (**F1–F4**) i ustawienia (**F10**). Można też przypisać
+przełączanie konsoli lub bezpośrednie otwarcie zakładki bindów/grafiki, również
+jako funkcję przycisku HUD-u.
+
+Plik HUD zapisuje się teraz jako `STUDIO_HUD 2`. Wersja 1 nadal jest odczytywana:
+dostaje podstawowe bindy, a dawne wbudowane panele ustawień są migrowane do
+nieusuwalnego okna aplikacji. Niestandardowa zawartość takich paneli jest zachowywana.
+
+## Optymalizacje renderera
+
+- Cache przygotowanej geometrii sceny przy nieruchomej kamerze i niezmienionych
+  obiektach. Porównywane są rzeczywiste transformacje, typy i ID encji, a także
+  kamera, FOV, rozmiar viewportu, zaznaczenie, siatka i tryb gizma; bez polegania
+  na liczniku rewizji, który pomijałby edycję przez referencję do encji.
+- Gotowe szablony spakowanych prymitywów dla skali jednorodnej — bez ponownego
+  liczenia normalnych i konwersji do formatu GPU przy każdym ruchu kamery.
+- Jeden import i jedno pakowanie wspólnej geometrii zamiast osobnego pakowania
+  debug + ponownego rozpakowania i pakowania HUD-u. Kolejność sekcji pozostaje
+  **HUD vertices → 3D vertices → HUD indices → 3D indices**.
+- Ponowne użycie pojemności buforów roboczych CPU; limity urządzenia zapamiętane
+  zamiast odpytywane w każdej klatce. Aktualizacje deskryptorów tylko po zmianie
+  bufora lub jego zakresu, nadal po fence poprzedniej klatki.
+- Tabela bindów używa clippera i nie rysuje niewidocznych wierszy.
+
+Statystyka **CPU geometrii** mierzy wyłącznie przygotowanie/odczyt cache, nie
+czas GPU ani całą klatkę. FPS zależy także od rozdzielczości, MSAA, sterownika,
+prezentacji i HUD-u; nie należy utożsamiać przyspieszenia tego etapu ze wzrostem
+FPS. Do porównań buduj **Release** i używaj tej samej sceny oraz rozdzielczości.
+
+Dodatkowe testy opt-in (`BUILD_TESTING=ON`): `bindings_tests` — zapis, walidacja,
+konflikty i migracja v1; `geometry_cache_tests` — unieważnianie cache po zmianach;
+Windows `editor_state_tests` — niedokowalne ustawienia, przechwytywanie skrótów,
+konflikty, przywracanie, nieaktywne bindy projektanta i remapowanie w runtime.
