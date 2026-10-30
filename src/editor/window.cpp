@@ -135,8 +135,15 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
     }
     case WM_ERASEBKGND: return 1;
     case WM_GETMINMAXINFO: {
+        // Let Windows calculate the maximized rectangle from the monitor work
+        // area first. Returning immediately with only ptMinTrackSize filled can
+        // make a maximized window cover the taskbar, especially on a secondary
+        // monitor or when the taskbar is placed on the top/side of the screen.
+        const auto result=DefWindowProcW(hwnd,message,wp,lp);
         auto* limits=reinterpret_cast<MINMAXINFO*>(lp);
-        limits->ptMinTrackSize.x=900; limits->ptMinTrackSize.y=600; return 0;
+        limits->ptMinTrackSize.x=900;
+        limits->ptMinTrackSize.y=600;
+        return result;
     }
     case WM_SIZE: g.minimized=wp==SIZE_MINIMIZED; return 0;
     case WM_CLOSE: g.close_requested=true; return 0;

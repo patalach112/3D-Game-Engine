@@ -21,6 +21,14 @@ void heading(const char* text) {
     ImGui::TextColored({0.32F,0.85F,0.80F,1},"%s",text);
     ImGui::Separator(); ImGui::Spacing();
 }
+void tool_button(const char* label,int mode,const char* hint) {
+    auto& g=app();
+    if (ImGui::RadioButton(label,g.gizmo_mode==mode)) {
+        g.gizmo_mode=mode;
+        g.drag_axis=-1;
+    }
+    ImGui::SetItemTooltip("%s",hint);
+}
 void splitter(const char* id,float x,float y,float w,float h,int& value,bool reverse) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{0,0});
     panel(id,x,y,w,h,ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoNav);
@@ -114,9 +122,13 @@ void inspector() {
         ImGui::TextWrapped("PPM + ruch: obrót kamery\nKółko nad 3D: zoom\nLPM: wybór i gizmo\nDelete: usuń obiekt\nCtrl+S: zapisz scenę\nTab: kolejne pole\nCtrl+A/C/V: zaznacz / kopiuj / wklej");
     }
     ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Button,{0.38F,0.12F,0.14F,1});
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,{0.62F,0.18F,0.21F,1});
     if (ImGui::Button("Usuń obiekt",{-1,0})) {
         (void)g.scene.remove_entity(g.selected); g.selected=0; g.name_target=0;
+        g.status=L"Usunięto obiekt";
     }
+    ImGui::PopStyleColor(2);
 }
 }
 void draw_ui() {
@@ -133,13 +145,22 @@ void draw_ui() {
     update_layout();
     const float left=static_cast<float>(g.left_width),right=static_cast<float>(g.right_width);
     panel("toolbar",0,0,width,kHeaderHeight,ImGuiWindowFlags_NoScrollbar);
+    ImGui::AlignTextToFramePadding();
     ImGui::TextColored({0.32F,0.85F,0.80F,1},"STARTER / STUDIO");
-    ImGui::SameLine(215);
-    if (ImGui::Button("Zapisz scenę")) save_scene();
+    ImGui::SameLine(185);
+    if (ImGui::Button("Zapisz  Ctrl+S")) save_scene();
+    ImGui::SetItemTooltip("Zapisz bieżącą scenę do scene.txt");
     ImGui::SameLine();
-    if (ImGui::Button("Reset kamery")) { g.orbit={}; }
-    ImGui::SameLine();
-    ImGui::TextDisabled("VULKAN  |  %u× MSAA  |  Perspektywa",g.renderer.antialiasing_samples());
+    if (ImGui::Button("Reset kamery")) { g.orbit={}; g.orbit.dragging=false; }
+    ImGui::SetItemTooltip("Przywróć domyślne ustawienie kamery");
+    ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
+    tool_button("Ruch Q",0,"Przesuwanie zaznaczonego obiektu (Q)");
+    ImGui::SameLine(); tool_button("Obrót W",1,"Obracanie zaznaczonego obiektu (W)");
+    ImGui::SameLine(); tool_button("Skala E",2,"Skalowanie zaznaczonego obiektu (E)");
+    if (ImGui::GetContentRegionAvail().x>220) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("Vulkan  |  %u× MSAA",g.renderer.antialiasing_samples());
+    }
     ImGui::End();
     panel("hierarchy",0,kHeaderHeight,left,height-kHeaderHeight-kFooterHeight);
     hierarchy(); ImGui::End();
@@ -178,10 +199,10 @@ void draw_ui() {
         if (ImGui::BeginTabItem("Ustawienia grafiki")) {
             ImGui::TextDisabled("WYŚWIETLANIE");
             bool unlimited=g.fps_limit==0;
-            if (ImGui::Checkbox("Unlimited FPS",&unlimited)) {
+            if (ImGui::Checkbox("Bez limitu FPS",&unlimited)) {
                 g.fps_limit=unlimited?0:60;
                 g.next_frame={}; // Apply the new mode without waiting for the old deadline.
-                g.status=unlimited?L"Limit FPS: unlimited":L"Limit FPS: 60";
+                g.status=unlimited?L"Limit FPS: wyłączony":L"Limit FPS: 60";
             }
             if (!unlimited) {
                 ImGui::SetNextItemWidth(240);
@@ -220,8 +241,10 @@ void draw_ui() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{10,4});
     panel("status",0,height-kFooterHeight,width,kFooterHeight,ImGuiWindowFlags_NoScrollbar);
     const auto status=utf8(g.status);
+    ImGui::TextColored({0.35F,0.82F,0.58F,1},"●");
+    ImGui::SameLine();
     if (g.fps_limit==0)
-        ImGui::TextDisabled("%s  |  %zu obiektów  |  %.1f FPS  |  unlimited",status.c_str(),
+        ImGui::TextDisabled("%s  |  %zu obiektów  |  %.1f FPS  |  bez limitu",status.c_str(),
             g.scene.entity_count(),static_cast<double>(ImGui::GetIO().Framerate));
     else
         ImGui::TextDisabled("%s  |  %zu obiektów  |  %.1f / %d FPS",status.c_str(),
