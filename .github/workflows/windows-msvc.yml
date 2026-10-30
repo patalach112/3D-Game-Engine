@@ -35,13 +35,16 @@ jobs:
           lib.exe /nologo /machine:x64 /def:deps/vulkan-loader/loader/vulkan-1.def /out:deps/vulkan-1.lib
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           'C:\msys64\mingw64\bin' >> $env:GITHUB_PATH
-          'C:\msys64\usr\bin' >> $env:GITHUB_PATH
       - name: Configure Visual Studio x64
-        run: >-
-          cmake -S . -B build-msvc -A x64
-          -DBUILD_TESTING=ON -DENGINE_USE_ASM=ON -DCMAKE_CXX_FLAGS=/WX
-          -DVulkan_INCLUDE_DIR=${{ github.workspace }}/deps/include
-          -DVulkan_LIBRARY=${{ github.workspace }}/deps/vulkan-1.lib
+        shell: pwsh
+        run: |
+          cmake -S . -B build-msvc -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON -DENGINE_USE_ASM=ON -DCMAKE_CXX_FLAGS=/WX -DCMAKE_ASM_NASM_COMPILER=C:/msys64/usr/bin/nasm.exe -DVulkan_INCLUDE_DIR=${{ github.workspace }}/deps/include -DVulkan_LIBRARY=${{ github.workspace }}/deps/vulkan-1.lib 2>&1 | Tee-Object -FilePath configure.log
+          if ($LASTEXITCODE -ne 0) {
+            $code = $LASTEXITCODE
+            $details = ((Get-Content configure.log | Select-Object -Last 100) -join '%0A')
+            Write-Output "::error::$details"
+            exit $code
+          }
       - name: Build Release and Debug (C++ flags must not reach NASM)
         run: |
           foreach ($config in 'Release', 'Debug') {
