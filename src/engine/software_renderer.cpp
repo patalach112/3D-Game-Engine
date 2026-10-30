@@ -30,6 +30,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -69,6 +70,11 @@ struct VulkanRenderer::Impl {
     VkInstance instance{};
     VkDebugUtilsMessengerEXT debug{};
     VkPhysicalDevice physical{};
+    VkPhysicalDeviceProperties device_properties{};
+    FrameGeometryCache frame_cache;
+    RenderStatistics stats;
+    bool descriptors_dirty{true};
+    VkDeviceSize descriptor_object_bytes{},descriptor_indirect_bytes{};
     VkDevice device{};
     VkQueue graphics_queue{}, present_queue{};
     std::uint32_t graphics_family{}, present_family{};
@@ -104,6 +110,11 @@ struct VulkanRenderer::Impl {
     struct Buffer { VkBuffer handle{}; VkDeviceMemory memory{}; VkDeviceSize capacity{}; void* mapped{}; } vertices, readback, geometry, object_data, indirect, ui_uv;
     VkFramebuffer framebuffer{};
     int target_width{}, target_height{};
+    std::vector<DebugAttributes> scratch_attributes;
+    std::vector<engine::Vertex> scratch_debug;
+    std::vector<std::uint32_t> scratch_debug_indices,scratch_hud_indices;
+    std::vector<Vertex_hud> scratch_hud;
+    std::vector<Vec2> scratch_uv;
     bool rendered{};
     bool recording{}; // Scene pass and presentation share one submission on Windows.
 
@@ -248,7 +259,7 @@ void VulkanRenderer::Impl::init() {
         const int score=properties.deviceType==VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU?100:
             properties.deviceType==VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU?50:10;
         if (score>best) {
-            best=score; physical=candidate; name=properties.deviceName; depth_format=chosen_depth;
+            best=score; physical=candidate; device_properties=properties; name=properties.deviceName; depth_format=chosen_depth;
             graphics_family=*graphics; present_family=present.value_or(*graphics);
         }
     }
@@ -532,6 +543,7 @@ void VulkanRenderer::Impl::ensure_buffer(Buffer& buffer, VkDeviceSize size, VkBu
     check(vkDeviceWaitIdle(device),"Wait before growing buffer");
     const VkDeviceSize capacity=std::max({size,buffer.capacity*2,VkDeviceSize{4096}});
     destroy_buffer(buffer);
+    descriptors_dirty=true; // A recreated handle may reuse the same numeric value.
     VkBufferCreateInfo info{};
     info.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO; info.size=capacity;
     info.usage=usage; info.sharingMode=VK_SHARING_MODE_EXCLUSIVE;
@@ -602,12 +614,14 @@ void VulkanRenderer::Impl::submit(VkSemaphore wait, VkSemaphore signal) {
 void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& camera,
                                 int width, int height, std::vector<std::uint32_t>& pixels,
                                 RenderViewport scene_view, bool draw_ui, Vec3 clear_color) {
-    auto packed=frame.geometry;
-    const auto custom_hud_indices=packed.layout.hudIndexCount;
-    const auto custom_hud_vertices=packed.layout.hudVertexCount;
-    const auto debug_base=packed.layout.sceneVertexCount;
-    const auto debug_first=packed.layout.sceneIndexCount;
-    std::vector<DebugAttributes> debug_attributes;
+    // Import once and pack once, rather than rebuilding the entire buffer after
+    // debug geometry and then importing/rebuilding it a second time for ImGui.
+    auto builder=GeometryBuilder::from_buffer(frame.geometry);
+    const auto custom_hud_indices=frame.geometry.layout.hudIndexCount;
+    const auto custom_hud_vertices=frame.geometry.layout.hudVertexCount;
+    const auto debug_base=frame.geometry.layout.sceneVertexCount;
+    const auto debug_first=frame.geometry.layout.sceneIndexCount;
+    auto& debug_attributes=scratch_attributes;debug_attributes.clear();
     float debug_scale=1;
     if (!frame.vertices.empty()) {
         double extent=0;
@@ -616,9 +630,9 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
                 std::abs(static_cast<double>(v.position.y)-camera.position.y),std::abs(static_cast<double>(v.position.z)-camera.position.z)});
         }
         debug_scale=static_cast<float>(std::max(1.0,extent/60000.0));
-        std::vector<engine::Vertex> packed_debug;
-        std::vector<std::uint32_t> debug_indices;
-        packed_debug.reserve(frame.vertices.size()); debug_attributes.reserve(frame.vertices.size());
+        auto& packed_debug=scratch_debug;packed_debug.clear();
+        auto& debug_indices=scratch_debug_indices;debug_indices.clear();
+        packed_debug.reserve(frame.vertices.size()); debug_attributes.reserve(frame.vertices.size());debug_indices.reserve(frame.vertices.size()+2);
         for (const auto& v:frame.vertices) {
             const Vec3 p{static_cast<float>((static_cast<double>(v.position.x)-camera.position.x)/debug_scale),
                 static_cast<float>((static_cast<double>(v.position.y)-camera.position.y)/debug_scale),
@@ -628,15 +642,13 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
         }
         // Mesh ranges are metadata only; debug topology is selected per batch below.
         while (debug_indices.size()%3) debug_indices.push_back(0);
-        auto builder=GeometryBuilder::from_buffer(packed);
-        builder.add_mesh(packed_debug,debug_indices); packed=builder.build();
+        builder.add_mesh(packed_debug,debug_indices);
     }
-    std::vector<Vec2> uv;
+    auto& uv=scratch_uv;uv.clear();
     if (draw_ui) {
-        auto builder=GeometryBuilder::from_buffer(packed);
         const auto* data=ImGui::GetDrawData();
-        std::vector<Vertex_hud> hud;
-        std::vector<std::uint32_t> indices;
+        auto& hud=scratch_hud;hud.clear();
+        auto& indices=scratch_hud_indices;indices.clear();
         hud.reserve(static_cast<std::size_t>(data->TotalVtxCount)); uv.reserve(hud.capacity());
         indices.reserve(static_cast<std::size_t>(data->TotalIdxCount));
         for (const auto* list:data->CmdLists) {
@@ -646,10 +658,11 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
             }
             for (auto index:list->IdxBuffer) indices.push_back(index);
         }
-        builder.append_ui(hud,indices); packed=builder.build();
+        builder.append_ui(hud,indices);
     }
+    const auto packed=builder.build();
     const auto object_count=static_cast<std::uint32_t>(packed.objects.size());
-    VkPhysicalDeviceProperties limits{}; vkGetPhysicalDeviceProperties(physical,&limits);
+    const auto& limits=device_properties;
     const auto object_bytes=packed.objects.size()*sizeof(ObjectData);
     const auto indirect_bytes=packed.commands.size()*sizeof(DrawIndexedIndirectCommand);
     if (object_bytes>limits.limits.maxStorageBufferRange || indirect_bytes>limits.limits.maxStorageBufferRange
@@ -682,7 +695,10 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
             writes[i].dstBinding=i; writes[i].descriptorCount=1; writes[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             writes[i].pBufferInfo=&descriptors[i];
         }
-        vkUpdateDescriptorSets(device,2,writes,0,nullptr);
+        if(descriptors_dirty || descriptor_object_bytes!=object_bytes || descriptor_indirect_bytes!=indirect_bytes) {
+            vkUpdateDescriptorSets(device,2,writes,0,nullptr);
+            descriptors_dirty=false;descriptor_object_bytes=object_bytes;descriptor_indirect_bytes=indirect_bytes;++stats.descriptor_updates;
+        }
         vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,cull_pipeline);
         vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,cull_layout,0,1,&geometry_set,0,nullptr);
         vkCmdPushConstants(command,cull_layout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(push),&push);
@@ -1090,6 +1106,7 @@ bool VulkanRenderer::handle_ui_message(void* window, unsigned int message,
 unsigned int VulkanRenderer::antialiasing_samples() const noexcept {
     return impl_?static_cast<unsigned int>(impl_->samples):1;
 }
+RenderStatistics VulkanRenderer::statistics() const noexcept {return impl_?impl_->stats:RenderStatistics{};}
 void VulkanRenderer::set_clear_color(Vec3 color) {
     if (!finite(color) || color.x < 0.0F || color.x > 1.0F
         || color.y < 0.0F || color.y > 1.0F || color.z < 0.0F || color.z > 1.0F)
@@ -1119,7 +1136,10 @@ void VulkanRenderer::render(const Scene& scene, const EditorCamera& camera, Enti
         if (impl_->ui_frame_open) finish_ui_frame();
         if (impl_->ui_frame_ready) ImGui::SetCurrentContext(impl_->ui);
         impl_->ui_frame_ready=false;
-        const auto frame=scene_geometry(scene,camera,selected,viewport.width,viewport.height,grid_visible_,gizmo_mode_);
+        const auto started=std::chrono::steady_clock::now();
+        const auto& frame=impl_->frame_cache.update(scene,camera,selected,viewport.width,viewport.height,grid_visible_,gizmo_mode_);
+        impl_->stats.geometry_cpu_us=std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-started).count();
+        impl_->stats.geometry_builds=impl_->frame_cache.builds;impl_->stats.geometry_cache_hits=impl_->frame_cache.hits;
         impl_->draw(frame,camera,width_,height_,pixels_,viewport,draw_ui,clear_color_);
     } catch (...) { shutdown(); throw; }
 }

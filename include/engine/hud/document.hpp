@@ -1,5 +1,6 @@
 #pragma once
 #include "engine/export.hpp"
+#include "engine/hud/bindings.hpp"
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -27,6 +28,7 @@ struct Document {
     Size window_minimum{900,600};
     float default_rounding{10};
     std::string docking;
+    std::vector<Binding> bindings{basic_bindings()};
     ENGINE_API Node* find(Id id);
     ENGINE_API const Node* find(Id id) const;
     ENGINE_API Id add(Kind kind,Id parent,const std::string& text);

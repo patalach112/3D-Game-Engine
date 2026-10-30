@@ -1,5 +1,6 @@
 #include "editor_app.hpp"
 #include "hud_editor.hpp"
+#include "settings.hpp"
 #include "dock_layout.hpp"
 #include "engine/log.hpp"
 #include <algorithm>
@@ -330,46 +331,7 @@ void renderer() {
     ImGui::TextWrapped("Cały obszar klienta: jeden render pass Vulkan. UI: trójkąty, scissor i atlas fontu. MSAA: %u×. Tekst: filtrowany atlas + pokrycie alpha. Bez bitmap GDI i bez odczytu pikseli na CPU.",g.renderer.antialiasing_samples());
 }
 
-void settings() {
-    auto& g=app();
-
-    ImGui::TextDisabled("WYŚWIETLANIE");
-    bool unlimited=g.fps_limit==0;
-    if (ImGui::Checkbox("Unlimited FPS",&unlimited)) {
-        g.fps_limit=unlimited?0:60;
-        g.next_frame={}; // Apply the new mode without waiting for the old deadline.
-        g.status=unlimited?L"Limit FPS: unlimited":L"Limit FPS: 60";
-    }
-    if (!unlimited) {
-        ImGui::SetNextItemWidth(240);
-        if (ImGui::SliderInt("Limit FPS",&g.fps_limit,15,360,"%d FPS")) {
-            g.next_frame={};
-            g.status=L"Zmieniono limit FPS";
-        }
-        ImGui::SameLine();
-        const int presets[]{30,60,120,144,240};
-        for (const int preset:presets) {
-            ImGui::PushID(preset);
-            if (ImGui::SmallButton(std::to_string(preset).c_str())) {
-                g.fps_limit=preset; g.next_frame={};
-            }
-            ImGui::PopID(); ImGui::SameLine();
-        }
-        ImGui::NewLine();
-    } else {
-        ImGui::TextDisabled("Renderer tworzy klatki tak szybko, jak pozwala CPU/GPU.");
-    }
-    ImGui::Separator();
-    ImGui::TextDisabled("WIDOK 3D");
-    ImGui::Checkbox("Pokaż siatkę",&g.grid_visible);
-    ImGui::SetNextItemWidth(240);
-    ImGui::SliderFloat("Pole widzenia",&g.camera.vertical_fov_degrees,30.0F,100.0F,"%.0f°");
-    float background[]{g.background_color.x,g.background_color.y,g.background_color.z};
-    if (ImGui::ColorEdit3("Kolor tła",background,
-        ImGuiColorEditFlags_NoInputs|ImGuiColorEditFlags_DisplayRGB))
-        g.background_color={background[0],background[1],background[2]};
-    ImGui::TextDisabled("MSAA: %u× (wybierane automatycznie dla GPU)",g.renderer.antialiasing_samples());
-}
+void settings() { ImGui::TextDisabled("Ustawienia otwiera się jako osobne okno aplikacji."); }
 
 } // namespace
 bool scene_input_at(int x,int y) {
@@ -401,8 +363,7 @@ void draw_ui() {
     window(layout::resources,g.show_resources,resources);
     window(layout::notes,g.show_notes,notes);
     window(layout::renderer,g.show_renderer,renderer);
-    if (g.focus_settings) { ImGui::SetNextWindowFocus(); g.focus_settings=false; }
-    window(layout::settings,g.show_settings,settings);
+    draw_settings_window();
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{10,4});
     sidebar("status",ImGuiDir_Down,kFooterHeight,ImGuiWindowFlags_NoScrollbar);
     const auto status=utf8(g.status);
@@ -412,37 +373,8 @@ void draw_ui() {
     g.menu_open=ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel);
     editor_shortcuts();
 }
-void editor_shortcuts() {
-    auto& g=app();
-    // A focused hierarchy is not a textbox. Keep editor shortcuts available
-    // there, but never delete/spawn while typing, dragging a field or in a popup.
-    const auto popup_flags=ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel;
-    if (!ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() && !ImGui::IsPopupOpen(nullptr,popup_flags)) {
-        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S,false)) save_scene();
-        else if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D,false)) duplicate_entity();
-        else if (!ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_F,false)) frame_selected();
-        else if (!ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Q,false)) set_tool(0);
-        else if (!ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_W,false)) set_tool(1);
-        else if (!ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_E,false)) set_tool(2);
-        else if (!ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N,false)) add_primitive(engine::PrimitiveType::Cube);
-        else if (ImGui::IsKeyPressed(ImGuiKey_Delete,false) && g.selected) {
-            (void)g.scene.remove_entity(g.selected); g.selected=0; g.name_target=0;
-            g.status=L"Usunięto obiekt";
-        }
-        if (!ImGui::GetIO().WantCaptureKeyboard) {
-            if (auto* entity=g.scene.find_entity(g.selected)) {
-                if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) entity->transform.position.x-=1;
-                if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) entity->transform.position.x+=1;
-                if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) entity->transform.position.y+=1;
-                if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) entity->transform.position.y-=1;
-            }
-            if (ImGui::IsKeyPressed(ImGuiKey_Equal) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd))
-                g.orbit.distance=std::max(2.0F,g.orbit.distance-1.0F);
-            if (ImGui::IsKeyPressed(ImGuiKey_Minus) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract))
-                g.orbit.distance=std::min(40.0F,g.orbit.distance+1.0F);
-        }
-    }
-}
+void editor_shortcuts() { process_bindings(); }
+
 void hud_builtin(const std::string& name) {
     if(name=="scene") scene_content();
     else if(name=="hierarchy") hierarchy();
@@ -469,9 +401,31 @@ void hud_action(const std::string& name) {
     else if(name=="object.square") add_primitive(engine::PrimitiveType::Square2D);
     else if(name=="layout.reset") g.hud_reset=true;
     else if(name=="app.close") PostMessageW(g.hwnd,WM_CLOSE,0,0);
-    else if(name=="settings") {
-        for(const auto& n:g.hud.nodes) if(n.builtin=="settings") {
-            auto* w=g.hud.find(n.parent); if(w) {w->visible=true;g.hud_focus=w->id;}
+    else if(name=="settings") {g.show_settings=true;g.focus_settings=true;}
+    else if(name=="entity.duplicate") duplicate_entity();
+    else if(name=="entity.delete") {
+        if(g.selected){(void)g.scene.remove_entity(g.selected);g.selected=0;g.name_target=0;g.drag_axis=-1;g.status=L"Usunięto obiekt";}
+    }
+    else if(name=="entity.reset") {if(auto* e=g.scene.find_entity(g.selected)){e->transform={};g.drag_axis=-1;g.status=L"Zresetowano transformację";}}
+    else if(name=="grid.toggle") g.grid_visible=!g.grid_visible;
+    else if(name=="camera.front") snap_camera(0);
+    else if(name=="camera.top") snap_camera(1);
+    else if(name=="camera.side") snap_camera(2);
+    else if(name=="camera.iso") snap_camera(3);
+    else if(name=="camera.zoom_in") g.orbit.distance=std::max(2.0F,g.orbit.distance-1);
+    else if(name=="camera.zoom_out") g.orbit.distance=std::min(40.0F,g.orbit.distance+1);
+    else if(name=="entity.left" || name=="entity.right" || name=="entity.up" || name=="entity.down") {
+        if(auto* e=g.scene.find_entity(g.selected)) {
+            if(name=="entity.left")e->transform.position.x-=1;
+            if(name=="entity.right")e->transform.position.x+=1;
+            if(name=="entity.up")e->transform.position.y+=1;
+            if(name=="entity.down")e->transform.position.y-=1;
+        }
+    }
+    else if(name=="console.toggle") {
+        g.show_console=!g.show_console;
+        if(g.hud_loaded)for(const auto& n:g.hud.nodes)if(n.builtin=="console") {
+            if(auto* w=g.hud.find(n.parent)){w->visible=!w->visible;if(w->visible)g.hud_focus=w->id;}
         }
     }
 }

@@ -18,6 +18,11 @@ struct EditorCamera {
     float vertical_fov_degrees{45.0F};
 };
 
+struct RenderStatistics {
+    std::uint64_t geometry_builds{},geometry_cache_hits{},descriptor_updates{};
+    double geometry_cpu_us{}; // CPU preparation only; NOT GPU frame time.
+};
+
 struct ScreenPoint {
     float x{};
     float y{};
@@ -67,6 +72,7 @@ public:
                            std::uintptr_t wparam, std::intptr_t lparam);
 #endif
     [[nodiscard]] ENGINE_API unsigned int antialiasing_samples() const noexcept;
+    [[nodiscard]] ENGINE_API RenderStatistics statistics() const noexcept;
     // Lightweight runtime graphics settings. They affect the next render and do
     // not recreate the Vulkan device or swapchain.
     ENGINE_API void set_clear_color(Vec3 color);

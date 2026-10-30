@@ -5,6 +5,7 @@
 #include <iostream>
 #include "dock_layout.hpp"
 #include "hud_editor.hpp"
+#include "settings.hpp"
 #include "engine/gizmo.hpp"
 
 namespace {
@@ -163,7 +164,9 @@ int main() {
     io.AddKeyEvent(ImGuiKey_Enter,false); ui_frame();
     assert(!g.grid_visible && !g.console_command[0]);
     g.show_settings=true; g.focus_settings=true; ui_frame(); ui_frame();
-    assert(ImGui::FindWindowByName(editor::layout::settings)->DockTabIsVisible);
+    const auto* settings=ImGui::FindWindowByName(editor::layout::settings);
+    assert(settings && !settings->DockIsActive && (settings->Flags&ImGuiWindowFlags_NoDocking));
+    g.show_settings=false;ui_frame();
     ImGui::DestroyContext();
     // Same document drives engine_editor and editor_hud; native controls are
     // deliberately not document nodes. Exercise both modes without a GPU.
@@ -200,6 +203,17 @@ int main() {
     for(int i=0;i<3;++i)hud_frame();
     assert(ImGui::FindWindowByName(engine::hud::window_name(*g.hud.find(custom)).c_str()));
     const std::string docking=ImGui::SaveIniSettingsToMemory();assert(!docking.empty());
+    // Settings remains reachable in designer mode but is not an editable node.
+    const auto node_count=g.hud.nodes.size();editor::hud_action("settings");hud_frame();hud_frame();
+    assert(g.show_settings && g.hud.nodes.size()==node_count);
+    assert(ImGui::FindWindowByName("Ustawienia")->Flags&ImGuiWindowFlags_NoDocking);
+    g.show_settings=false;g.gizmo_mode=0;
+    hud_io.AddKeyEvent(ImGuiKey_E,true);hud_frame();editor::process_bindings();assert(g.gizmo_mode==0);
+    hud_io.AddKeyEvent(ImGuiKey_E,false);hud_frame();
+    g.hud_designer=false;editor::initialize_bindings();
+    hud_io.AddMousePosEvent(1,static_cast<float>(g.height)-2);hud_frame();
+    hud_io.AddKeyEvent(ImGuiKey_E,true);hud_frame();assert(g.gizmo_mode==2);
+    hud_io.AddKeyEvent(ImGuiKey_E,false);hud_frame();
     ImGui::DestroyContext();g.hud_loaded=false;g.hud_designer=false;
     std::cout << "Editor state, flat picking, docked UI and console passed (no GPU)\n";
 }

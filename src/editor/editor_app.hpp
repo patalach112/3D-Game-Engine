@@ -51,7 +51,11 @@ struct App {
     ImDrawList* scene_drawlist{};
     bool reset_layout{}, show_hierarchy{true}, show_inspector{true}, show_scene{true};
     bool show_console{true}, show_resources{true}, show_notes{true}, show_renderer{true};
-    bool show_settings{}, focus_settings{};
+    bool show_settings{}, focus_settings{}, settings_hovered{};
+    std::vector<engine::hud::Binding> live_bindings;
+    bool bindings_initialized{}, binding_capture_armed{};
+    int binding_capture{-1}, binding_capture_frame{}, binding_consumed_frame{-1};
+    std::string binding_message;
     ImGuiTextFilter console_filter;
     bool console_levels[4]{true,true,true,true};
     bool console_auto_scroll{true};
