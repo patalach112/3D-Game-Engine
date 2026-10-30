@@ -26,7 +26,10 @@ jobs:
       - name: Prepare MSVC import library for the Vulkan C ABI
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force deps | Out-Null
+          New-Item -ItemType Directory -Force deps/include | Out-Null
+          # Do not put the whole MinGW include tree on MSVC's search path.
+          Copy-Item -Recurse C:/msys64/mingw64/include/vulkan deps/include/
+          Copy-Item -Recurse C:/msys64/mingw64/include/vk_video deps/include/
           git clone --depth 1 --branch v1.3.290 https://github.com/KhronosGroup/Vulkan-Loader deps/vulkan-loader
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           lib.exe /nologo /machine:x64 /def:deps/vulkan-loader/loader/vulkan-1.def /out:deps/vulkan-1.lib
@@ -37,7 +40,7 @@ jobs:
         run: >-
           cmake -S . -B build-msvc -A x64
           -DBUILD_TESTING=ON -DENGINE_USE_ASM=ON -DCMAKE_CXX_FLAGS=/WX
-          -DVulkan_INCLUDE_DIR=C:/msys64/mingw64/include
+          -DVulkan_INCLUDE_DIR=${{ github.workspace }}/deps/include
           -DVulkan_LIBRARY=${{ github.workspace }}/deps/vulkan-1.lib
       - name: Build Release and Debug (C++ flags must not reach NASM)
         run: |

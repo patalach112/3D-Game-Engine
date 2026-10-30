@@ -86,7 +86,7 @@ Projekt używa pliku `CMakeLists.txt` (nie `cmake.txt`). Dla Visual Studio możn
 budować z PowerShella, bez ręcznego `mkdir` i przechodzenia do katalogu build:
 
 ```powershell
-cmake -S . -B build -A x64
+cmake -S . -B build
 cmake --build build --config Release --parallel
 .\build\Release\engine_editor.exe
 ```
