@@ -76,10 +76,16 @@ jobs:
           Invoke-WebRequest 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.5/mesa3d-26.2.5-release-msvc.7z' -OutFile mesa.7z
           & 7z x mesa.7z '-odeps/mesa' -y | Out-Null
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $icd = Get-ChildItem deps/mesa -Recurse -Filter '*lvp*.json' | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
-          if (!$icd) { throw 'Lavapipe x64 ICD not found' }
+          # Lavapipe's Windows build lacks VK_KHR_win32_surface. Dozen on
+          # Windows WARP exercises the real Vulkan swapchain without a GPU.
+          $icd = Get-ChildItem deps/mesa -Recurse -Filter '*dzn*.json' | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+          if (!$icd) { throw 'Dozen x64 ICD not found' }
           "VK_ICD_FILENAMES=$($icd.FullName)" >> $env:GITHUB_ENV
+          'DZN_DEBUG=warp' >> $env:GITHUB_ENV
           $icd.DirectoryName >> $env:GITHUB_PATH
+          $dxil = Get-ChildItem deps/mesa -Recurse -Filter 'dxil.dll' | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+          if (!$dxil) { throw 'Dozen DXIL validator not found' }
+          $dxil.DirectoryName >> $env:GITHUB_PATH
       - name: Launch both real GUI executables and present Vulkan frames
         shell: pwsh
         run: |
