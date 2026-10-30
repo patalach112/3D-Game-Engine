@@ -41,9 +41,16 @@ jobs:
           -DVulkan_LIBRARY=${{ github.workspace }}/deps/vulkan-1.lib
       - name: Build Release and Debug (C++ flags must not reach NASM)
         run: |
-          cmake --build build-msvc --config Release --parallel 2
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --build build-msvc --config Debug --parallel 2
+          foreach ($config in 'Release', 'Debug') {
+            cmake --build build-msvc --config $config --parallel 2 2>&1 | Tee-Object -FilePath "msvc-$config.log"
+            if ($LASTEXITCODE -ne 0) {
+              $code = $LASTEXITCODE
+              Get-Content "msvc-$config.log" | Select-String 'error|warning C' | Select-Object -First 25 | ForEach-Object {
+                Write-Output "::error::$($_.Line)"
+              }
+              exit $code
+            }
+          }
       - name: Test without a Vulkan GPU
         shell: pwsh
         run: |
