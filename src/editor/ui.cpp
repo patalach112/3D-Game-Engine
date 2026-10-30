@@ -61,7 +61,8 @@ void hierarchy() {
         if (ImGui::Selectable("##entity",entity.id==g.selected,0,{0,28})) g.selected=entity.id;
         ImGui::SetItemTooltip("%s",entity.name.c_str());
         // Raw text: an object name containing ## must not become a widget ID.
-        ImGui::GetWindowDrawList()->AddRectFilled({pos.x+3,pos.y+10},{pos.x+11,pos.y+18},IM_COL32(82,187,179,255),2);
+        ImGui::GetWindowDrawList()->AddRectFilled({pos.x+3,pos.y+10},{pos.x+11,pos.y+18},
+            ImGui::ColorConvertFloat4ToU32({entity.color.x,entity.color.y,entity.color.z,1}),2);
         ImGui::GetWindowDrawList()->AddText({pos.x+19,pos.y+(28-ImGui::GetFontSize())/2},
             ImGui::GetColorU32(ImGuiCol_Text),entity.name.c_str());
         ImGui::PopID();
@@ -96,6 +97,15 @@ void inspector() {
         if (ImGui::Button("Resetuj transformację",{-1,0})) entity->transform={};
     }
     ImGui::Spacing();
+    if (ImGui::CollapsingHeader("Materiał",ImGuiTreeNodeFlags_DefaultOpen)) {
+        float color[]{entity->color.x,entity->color.y,entity->color.z};
+        ImGui::SetNextItemWidth(-1);
+        if(ImGui::ColorEdit3("##ObjectColor",color,ImGuiColorEditFlags_DisplayRGB|ImGuiColorEditFlags_PickerHueWheel))
+            entity->color={color[0],color[1],color[2]};
+        ImGui::TextDisabled("Kolor bazowy / oświetlenie sceny");
+        if(entity->mesh)ImGui::TextDisabled("OBJ: %zu wierzchołków / %zu trójkątów",entity->mesh->vertices.size(),entity->mesh->triangles.size());
+    }
+    ImGui::Spacing();
     if (ImGui::CollapsingHeader("Sterowanie",ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::TextWrapped("PPM + ruch: obrót kamery\nKółko nad 3D: zoom\nLPM: wybór i gizmo\nDelete: usuń obiekt\nCtrl+S: zapisz scenę\nTab: kolejne pole\nCtrl+A/C/V: zaznacz / kopiuj / wklej");
     }
@@ -113,10 +123,12 @@ void set_tool(int mode) {
     if (g.gizmo_mode!=mode) { g.gizmo_mode=mode; g.drag_axis=-1; }
 }
 void add_menu_contents() {
-    if (ImGui::BeginMenu("Obiekty")) {
+    if (ImGui::BeginMenu("Obiekty 3D")) {
         if (ImGui::MenuItem("Kostka")) add_primitive(engine::PrimitiveType::Cube);
         if (ImGui::MenuItem("Kula")) add_primitive(engine::PrimitiveType::Sphere);
         if (ImGui::MenuItem("Walec")) add_primitive(engine::PrimitiveType::Cylinder);
+        if (ImGui::MenuItem("Stożek")) add_primitive(engine::PrimitiveType::Cone);
+        if (ImGui::MenuItem("Piramida")) add_primitive(engine::PrimitiveType::Pyramid);
         if (ImGui::MenuItem("Płaszczyzna 3D")) add_primitive(engine::PrimitiveType::Plane);
         ImGui::EndMenu();
     }
@@ -135,7 +147,7 @@ void title_bar() {
           ImGuiWindowFlags_MenuBar|ImGuiWindowFlags_NoScrollbar);
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("Plik")) {
-            ImGui::MenuItem("Import",nullptr,false,false);
+            if (ImGui::MenuItem("Importuj model OBJ…","Ctrl+I")) import_obj_model();
             ImGui::MenuItem("Eksport",nullptr,false,false);
             ImGui::Separator();
             if (ImGui::MenuItem("Zapisz scenę","Ctrl+S")) save_scene();
@@ -302,14 +314,16 @@ void scene_window() {
 }
 
 void resources() {
-
+    if(ImGui::Button("Importuj OBJ…",{-1,34}))import_obj_model();
+    ImGui::SetItemTooltip("Wczytaj model Wavefront OBJ (Ctrl+I)");
+    ImGui::Spacing();
     ImGui::TextDisabled("PRYMITYWY / kliknij, aby dodać do sceny");
     const engine::PrimitiveType types[]{engine::PrimitiveType::Cube,engine::PrimitiveType::Sphere,
-        engine::PrimitiveType::Cylinder,engine::PrimitiveType::Plane,
+        engine::PrimitiveType::Cylinder,engine::PrimitiveType::Cone,engine::PrimitiveType::Pyramid,engine::PrimitiveType::Plane,
         engine::PrimitiveType::Circle2D,engine::PrimitiveType::Square2D};
-    const char* labels[]{"Kostka","Kula","Walec","Płaszczyzna","Koło 2D","Kwadrat 2D"};
+    const char* labels[]{"Kostka","Kula","Walec","Stożek","Piramida","Płaszczyzna","Koło 2D","Kwadrat 2D"};
     const int columns=std::max(1,static_cast<int>((ImGui::GetContentRegionAvail().x+8)/108));
-    for (int i=0;i<6;++i) {
+    for (int i=0;i<8;++i) {
         if (i%columns) ImGui::SameLine();
         if (ImGui::Button(labels[i],{100,42})) add_primitive(types[i]);
     }
@@ -392,6 +406,7 @@ void hud_builtin(const std::string& name) {
 void hud_action(const std::string& name) {
     auto& g=app();
     if(name=="scene.save") save_scene();
+    else if(name=="model.import") import_obj_model();
     else if(name=="camera.reset") g.orbit={};
     else if(name=="camera.frame") frame_selected();
     else if(name=="tool.move") set_tool(0);
@@ -400,6 +415,8 @@ void hud_action(const std::string& name) {
     else if(name=="object.cube") add_primitive(engine::PrimitiveType::Cube);
     else if(name=="object.sphere") add_primitive(engine::PrimitiveType::Sphere);
     else if(name=="object.cylinder") add_primitive(engine::PrimitiveType::Cylinder);
+    else if(name=="object.cone") add_primitive(engine::PrimitiveType::Cone);
+    else if(name=="object.pyramid") add_primitive(engine::PrimitiveType::Pyramid);
     else if(name=="object.plane") add_primitive(engine::PrimitiveType::Plane);
     else if(name=="object.circle") add_primitive(engine::PrimitiveType::Circle2D);
     else if(name=="object.square") add_primitive(engine::PrimitiveType::Square2D);

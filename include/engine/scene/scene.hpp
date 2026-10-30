@@ -4,7 +4,9 @@
 
 #include "engine/math/vec3.hpp"
 
+#include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -19,6 +21,17 @@ enum class PrimitiveType : std::uint8_t {
     Plane,
     Circle2D, // Flat XY disk. Append values to preserve existing scene IDs.
     Square2D, // Flat XY square.
+    Cone,
+    Pyramid,
+};
+
+// Immutable CPU mesh shared by imported-object instances. Faces are triangles;
+// edges are retained for selection outlines in the editor.
+struct MeshAsset {
+    std::vector<Vec3> vertices;
+    std::vector<std::array<int,3>> triangles;
+    std::vector<std::array<int,2>> edges;
+    std::string source;
 };
 
 struct Transform {
@@ -32,6 +45,8 @@ struct Entity {
     std::string name;
     PrimitiveType primitive{PrimitiveType::Cube};
     Transform transform{};
+    Vec3 color{0.65F,0.65F,0.67F};
+    std::shared_ptr<const MeshAsset> mesh; // null for a built-in primitive
 };
 
 class Scene {

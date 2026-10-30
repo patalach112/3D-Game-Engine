@@ -37,6 +37,24 @@ MeshData make_primitive_mesh(PrimitiveType type) {
             mesh.triangles.push_back({0,a,b});
             mesh.edges.push_back({a,b});
         }
+    } else if(type==PrimitiveType::Cone) {
+        constexpr int segments=24;
+        mesh.vertices.push_back({0,0.5F,0});
+        const int center=1;mesh.vertices.push_back({0,-0.5F,0});
+        for(int i=0;i<segments;++i) {
+            const float angle=2.0F*kPi*static_cast<float>(i)/segments;
+            mesh.vertices.push_back({0.5F*std::cos(angle),-0.5F,0.5F*std::sin(angle)});
+        }
+        for(int i=0;i<segments;++i) {
+            const int a=2+i,b=2+(i+1)%segments;
+            mesh.triangles.push_back({0,a,b});
+            mesh.triangles.push_back({center,b,a});
+            mesh.edges.push_back({0,a});mesh.edges.push_back({a,b});
+        }
+    } else if(type==PrimitiveType::Pyramid) {
+        mesh.vertices={{0,0.5F,0},{-0.5F,-0.5F,-0.5F},{0.5F,-0.5F,-0.5F},{0.5F,-0.5F,0.5F},{-0.5F,-0.5F,0.5F}};
+        mesh.triangles={{{0,1,2}},{{0,2,3}},{{0,3,4}},{{0,4,1}},{{1,4,3}},{{1,3,2}}};
+        mesh.edges={{{0,1}},{{0,2}},{{0,3}},{{0,4}},{{1,2}},{{2,3}},{{3,4}},{{4,1}}};
     } else if(type==PrimitiveType::Cylinder) {
         constexpr int segments=20;
         for(int ring=0;ring<2;++ring) for(int i=0;i<segments;++i) {
@@ -95,13 +113,15 @@ MeshData make_primitive_mesh(PrimitiveType type) {
 }
 
 const MeshData& primitive_mesh(PrimitiveType type) {
-    static const std::array<MeshData, 6> cache{
+    static const std::array<MeshData, 8> cache{
         make_primitive_mesh(PrimitiveType::Cube),
         make_primitive_mesh(PrimitiveType::Sphere),
         make_primitive_mesh(PrimitiveType::Cylinder),
         make_primitive_mesh(PrimitiveType::Plane),
         make_primitive_mesh(PrimitiveType::Circle2D),
         make_primitive_mesh(PrimitiveType::Square2D),
+        make_primitive_mesh(PrimitiveType::Cone),
+        make_primitive_mesh(PrimitiveType::Pyramid),
     };
     const auto index=static_cast<std::size_t>(type);
     if (index>=cache.size()) throw std::invalid_argument("Invalid primitive type");

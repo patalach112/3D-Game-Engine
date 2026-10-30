@@ -119,6 +119,7 @@ void reset_frame_timing();
 void apply_input_event(HWND hwnd,const engine::InputEvent& event);
 constexpr UINT kWorkerWake=WM_APP+1;
 void save_scene();
+void import_obj_model();
 void add_primitive(engine::PrimitiveType type);
 void duplicate_entity();
 void frame_selected();

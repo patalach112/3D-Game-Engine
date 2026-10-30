@@ -41,8 +41,8 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
         out.push_back({a, color, grid}); out.push_back({b, color, grid});
     };
     for (const auto& entity : scene.entities()) {
-        if (entity.primitive!=PrimitiveType::Cube && entity.id!=selected) continue;
-        const auto& mesh = primitive_mesh(entity.primitive);
+        if ((entity.mesh || entity.primitive!=PrimitiveType::Cube) && entity.id!=selected) continue;
+        const auto& mesh = entity.mesh?*entity.mesh:primitive_mesh(entity.primitive);
         const auto& t = entity.transform;
         if (!finite(t.position) || !finite(t.rotation) || !finite(t.scale)) continue;
         const auto rotation=unpack_rotation(pack_rotation(t.rotation));
@@ -56,7 +56,7 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
             const Vec3 py{px.x*cy+px.z*sy,px.y,-px.x*sy+px.z*cy};
             world.push_back(add({py.x*cz-py.y*sz,py.x*sz+py.y*cz,py.z}, t.position));
         }
-        if (entity.primitive == PrimitiveType::Cube || entity.id == selected) {
+        if (entity.primitive == PrimitiveType::Cube || entity.mesh || entity.id == selected) {
             for (const auto& edge : mesh.edges)
                 line(lines, world[edge[0]], world[edge[1]],
                      rgb(entity.id == selected ? 0x00F1A06BU : 0x00555558U));
@@ -64,25 +64,26 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
     }
 
     GeometryBuilder builder;
-    std::array<MeshId,6> cached{};
-    std::array<bool,6> has_mesh{};
+    std::array<MeshId,8> cached{};
+    std::array<bool,8> has_mesh{};
     for (const auto& entity:scene.entities()) {
         const auto& t=entity.transform;
-        if (!finite(t.position)||!finite(t.rotation)||!finite(t.scale)) continue;
+        if (!finite(t.position)||!finite(t.rotation)||!finite(t.scale)||!finite(entity.color)) continue;
         const bool uniform=t.scale.x==t.scale.y&&t.scale.y==t.scale.z;
+        const bool builtin=!entity.mesh;
         const auto type=static_cast<std::size_t>(entity.primitive);
         if(type>=cached.size())throw std::invalid_argument("Unknown primitive");
-        const auto& mesh=primitive_mesh(entity.primitive);
+        const auto& mesh=entity.mesh?*entity.mesh:primitive_mesh(entity.primitive);
         MeshId id{};
-        if (uniform&&has_mesh[type]) id=cached[type];
+        if (builtin&&uniform&&has_mesh[type]) id=cached[type];
         else {
             std::vector<engine::Vertex> vertices;
             std::vector<std::uint32_t> indices;
             const auto local=[&](Vec3 p) { return uniform?p:Vec3{p.x*t.scale.x,p.y*t.scale.y,p.z*t.scale.z}; };
-            if(uniform) {
+            if(builtin&&uniform) {
                 struct FlatMesh {std::vector<engine::Vertex> vertices;std::vector<std::uint32_t> indices;};
                 static const auto templates=[] {
-                    std::array<FlatMesh,6> result;
+                    std::array<FlatMesh,8> result;
                     for(std::size_t i=0;i<result.size();++i) {
                         const auto& source=primitive_mesh(static_cast<PrimitiveType>(i));auto& flat=result[i];
                         flat.vertices.reserve(source.triangles.size()*3);flat.indices.reserve(source.triangles.size()*3);
@@ -104,13 +105,11 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
             }
             id=builder.add_mesh(vertices,indices);
             }
-            if (uniform) { cached[type]=id; has_mesh[type]=true; }
+            if (builtin&&uniform) { cached[type]=id; has_mesh[type]=true; }
         }
         ObjectData object;
         object.position=t.position; object.rotation=pack_rotation(t.rotation); object.scale=uniform?t.scale.x:1;
-        const auto base=entity.id==selected?0x00D8D8DAU:entity.primitive==PrimitiveType::Sphere?0x007FA8D8U:
-            entity.primitive==PrimitiveType::Cylinder?0x007DAF82U:entity.primitive==PrimitiveType::Plane?0x00B2A27DU:0x00A7A7AAU;
-        const auto tint=rgb(base); builder.add_object(id,object,{tint.x,tint.y,tint.z,1});
+        builder.add_object(id,object,{entity.color.x,entity.color.y,entity.color.z,1});
     }
     // Ground grid bounds follow the frustum, rather than a fixed little patch.
     const Basis basis=camera_basis(camera);
@@ -223,13 +222,14 @@ const FrameGeometry& FrameGeometryCache::update(const Scene& scene,const EditorC
         entities.size()==scene.entity_count();
     if(match)for(std::size_t i=0;i<entities.size();++i) {
         const auto& a=entities[i];const auto& b=scene.entities()[i];
-        if(a.id!=b.id||a.primitive!=b.primitive||!same(a.transform.position,b.transform.position)||
-            !same(a.transform.rotation,b.transform.rotation)||!same(a.transform.scale,b.transform.scale)){match=false;break;}
+        if(a.id!=b.id||a.primitive!=b.primitive||a.mesh!=b.mesh.get()||!same(a.color,b.color)||
+            !same(a.transform.position,b.transform.position)||!same(a.transform.rotation,b.transform.rotation)||
+            !same(a.transform.scale,b.transform.scale)){match=false;break;}
     }
     if(match){++hits;return frame;}
     auto replacement=scene_geometry(scene,view,selection,w,h,show_grid,gizmo);
     std::vector<GeometryEntityKey> keys;keys.reserve(scene.entity_count());
-    for(const auto& e:scene.entities())keys.push_back({e.id,e.primitive,e.transform});
+    for(const auto& e:scene.entities())keys.push_back({e.id,e.primitive,e.transform,e.color,e.mesh.get()});
     frame=std::move(replacement);entities=std::move(keys);camera=view;selected=selection;
     width=w;height=h;grid=show_grid;mode=gizmo;valid=true;++builds;return frame;
 }

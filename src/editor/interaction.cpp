@@ -46,9 +46,15 @@ bool ray_box(engine::Ray3 ray, const engine::Entity& entity, float& distance) {
     const float origin[3]{ray.origin.x, ray.origin.y, ray.origin.z};
     const float direction[3]{ray.direction.x, ray.direction.y, ray.direction.z};
     const float center[3]{};
-    const float half[3]{std::abs(entity.transform.scale.x) * 0.5F,
-                         std::abs(entity.transform.scale.y) * 0.5F,
-                         std::abs(entity.transform.scale.z) * 0.5F};
+    engine::Vec3 local_half{.5F,.5F,.5F};
+    if(entity.mesh)for(const auto p:entity.mesh->vertices) {
+        local_half.x=std::max(local_half.x,std::abs(p.x));
+        local_half.y=std::max(local_half.y,std::abs(p.y));
+        local_half.z=std::max(local_half.z,std::abs(p.z));
+    }
+    const float half[3]{std::abs(entity.transform.scale.x) * local_half.x,
+                         std::abs(entity.transform.scale.y) * local_half.y,
+                         std::abs(entity.transform.scale.z) * local_half.z};
     for (int axis = 0; axis < 3; ++axis) {
         if (std::abs(direction[axis]) < 1.0e-7F) {
             if (origin[axis] < center[axis] - half[axis] || origin[axis] > center[axis] + half[axis]) return false;

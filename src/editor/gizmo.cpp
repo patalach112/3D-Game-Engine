@@ -77,6 +77,8 @@ void add_primitive(engine::PrimitiveType type) {
     switch (type) {
     case engine::PrimitiveType::Sphere: name = "Sphere"; break;
     case engine::PrimitiveType::Cylinder: name = "Cylinder"; break;
+    case engine::PrimitiveType::Cone: name = "Cone"; break;
+    case engine::PrimitiveType::Pyramid: name = "Pyramid"; break;
     case engine::PrimitiveType::Plane: name = "Plane"; break;
     case engine::PrimitiveType::Circle2D: name = "Circle 2D"; break;
     case engine::PrimitiveType::Square2D: name = "Square 2D"; break;
