@@ -11,6 +11,15 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if(MSVC)
+    # DLL and all consumers exchange STL objects: use the same shared CRT in
+    # each configuration (/MD Release, /MDd Debug), never mix /MT and /MD.
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    # Source files/tests contain UTF-8 Polish text. Do not pass C++ flags to NASM.
+    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/utf-8>"
+                        "$<$<COMPILE_LANGUAGE:CXX>:/EHsc>")
+endif()
+
 # Vulkan SDK supplies headers/loader and glslc (or glslangValidator).
 find_package(Vulkan 1.1 REQUIRED)
 find_package(Threads REQUIRED)
@@ -86,7 +95,11 @@ add_library(engine_core SHARED
     ${ENGINE_PLATFORM_SOURCE}
     src/engine/scene.cpp
     src/engine/software_renderer.cpp
+    src/engine/render/mesh_builder.cpp
+    src/engine/render/geometry.cpp
     src/engine/log.cpp
+    src/engine/hud/document.cpp
+    src/engine/hud/bindings.cpp
     src/engine/ui/third_party/imgui/imgui.cpp
     src/engine/ui/third_party/imgui/imgui_draw.cpp
     src/engine/ui/third_party/imgui/imgui_tables.cpp
@@ -131,32 +144,31 @@ if(MINGW AND ENGINE_STATIC_MINGW_RUNTIME)
 endif()
 
 if(MSVC)
-    target_compile_options(engine_core PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:/W4;/permissive-;/utf-8>")
+    target_compile_options(engine_core PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:/W4;/permissive->")
 else()
     target_compile_options(engine_core PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>")
 endif()
 
 if(WIN32)
-    add_executable(engine_editor WIN32
-        src/editor/main.cpp
-        src/editor/app.cpp
-        src/editor/ui.cpp
-        src/editor/render.cpp
-        src/editor/scene_io.cpp
-        src/editor/interaction.cpp
-        src/editor/gizmo.cpp
-        src/editor/window.cpp
-    )
-    target_link_libraries(engine_editor PRIVATE engine_core user32)
-    target_compile_definitions(engine_editor PRIVATE UNICODE _UNICODE)
-    if(MINGW)
-        # MinGW needs this option to use the Unicode wWinMain entry point.
-        target_link_options(engine_editor PRIVATE -municode)
-    endif()
+    set(EDITOR_FRONTEND_SOURCES
+        src/editor/app.cpp src/editor/ui.cpp src/editor/render.cpp
+        src/editor/scene_io.cpp src/editor/interaction.cpp src/editor/gizmo.cpp
+        src/editor/window.cpp src/editor/hud_editor.cpp src/editor/settings.cpp src/editor/startup.cpp)
+    add_library(editor_frontend STATIC ${EDITOR_FRONTEND_SOURCES})
+    target_link_libraries(editor_frontend PUBLIC engine_core user32)
+    target_compile_definitions(editor_frontend PUBLIC UNICODE _UNICODE)
+    foreach(APP IN ITEMS engine_editor editor_hud)
+        add_executable(${APP} WIN32 src/editor/main.cpp)
+        target_link_libraries(${APP} PRIVATE editor_frontend)
+        if(MINGW)
+            target_link_options(${APP} PRIVATE -municode)
+        endif()
+    endforeach()
+    target_compile_definitions(editor_hud PRIVATE EDITOR_HUD_DESIGNER)
     if(MSVC)
-        target_compile_options(engine_editor PRIVATE /W4 /permissive- /utf-8)
+        target_compile_options(editor_frontend PRIVATE /W4 /permissive-)
     else()
-        target_compile_options(engine_editor PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(editor_frontend PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 else()
     # Headless Linux build uses the same Vulkan renderer with GPU image readback.
@@ -164,6 +176,7 @@ else()
     target_link_libraries(engine_editor PRIVATE engine_core)
 endif()
 
+option(BUILD_TESTING "Build developer test executables (not needed to run the editors)" OFF)
 include(CTest)
 if(BUILD_TESTING)
     add_executable(engine_tests tests/engine_tests.cpp)
@@ -185,37 +198,48 @@ if(BUILD_TESTING)
     add_executable(ui_tests tests/ui_tests.cpp)
     target_link_libraries(ui_tests PRIVATE engine_core)
     if(MSVC)
-        target_compile_options(ui_tests PRIVATE /UNDEBUG /utf-8)
+        target_compile_options(ui_tests PRIVATE /UNDEBUG)
     else()
         target_compile_options(ui_tests PRIVATE -UNDEBUG)
     endif()
     add_test(NAME ui_tests COMMAND ui_tests)
-    foreach(TEST IN ITEMS geometry_tests geometry_gpu_tests input_tests render_worker_tests
-            camera_smoothing_tests render_worker_gpu_tests)
+    foreach(TEST IN ITEMS bindings_tests geometry_cache_tests hud_tests geometry_tests geometry_gpu_tests input_tests render_worker_tests
+            camera_smoothing_tests render_worker_gpu_tests log_tests docking_tests primitives_gpu_tests)
         add_executable(${TEST} tests/${TEST}.cpp)
         target_link_libraries(${TEST} PRIVATE engine_core)
         if(MSVC)
-            target_compile_options(${TEST} PRIVATE /UNDEBUG /utf-8)
+            target_compile_options(${TEST} PRIVATE /UNDEBUG)
         else()
             target_compile_options(${TEST} PRIVATE -UNDEBUG)
         endif()
         add_test(NAME ${TEST} COMMAND ${TEST})
     endforeach()
+    target_sources(log_tests PRIVATE tests/log_release_probe.cpp)
     set_tests_properties(input_tests render_worker_tests camera_smoothing_tests PROPERTIES TIMEOUT 30)
     set_tests_properties(render_worker_gpu_tests PROPERTIES TIMEOUT 120)
     if(WIN32)
         # Exercise editor state without a window or Vulkan device. Building this
         # target also catches header/implementation drift in app.cpp.
-        add_executable(editor_state_tests tests/editor_state_tests.cpp src/editor/app.cpp)
+        add_executable(editor_state_tests tests/editor_state_tests.cpp)
         target_include_directories(editor_state_tests PRIVATE src/editor)
-        target_link_libraries(editor_state_tests PRIVATE engine_core user32)
+        target_link_libraries(editor_state_tests PRIVATE editor_frontend)
         target_compile_definitions(editor_state_tests PRIVATE UNICODE _UNICODE)
         if(MSVC)
-            target_compile_options(editor_state_tests PRIVATE /UNDEBUG /W4 /permissive- /utf-8)
+            target_compile_options(editor_state_tests PRIVATE /UNDEBUG /W4 /permissive-)
         else()
             target_compile_options(editor_state_tests PRIVATE -UNDEBUG -Wall -Wextra -Wpedantic)
         endif()
         add_test(NAME editor_state_tests COMMAND editor_state_tests)
+        add_executable(editor_startup_tests tests/editor_startup_tests.cpp)
+        target_include_directories(editor_startup_tests PRIVATE src/editor)
+        target_link_libraries(editor_startup_tests PRIVATE editor_frontend)
+        if(MSVC)
+            target_compile_options(editor_startup_tests PRIVATE /UNDEBUG /W4 /permissive-)
+        else()
+            target_compile_options(editor_startup_tests PRIVATE -UNDEBUG -Wall -Wextra -Wpedantic)
+        endif()
+        add_test(NAME editor_startup_tests COMMAND editor_startup_tests)
+        set_tests_properties(editor_startup_tests editor_state_tests PROPERTIES TIMEOUT 60)
     endif()
     if(MINGW AND ENGINE_STATIC_MINGW_RUNTIME AND CMAKE_OBJDUMP)
         # Unlike rendering tests, this check does not need a Vulkan driver/GPU.
@@ -233,8 +257,11 @@ endif()
 set_target_properties(engine_editor PROPERTIES INSTALL_RPATH "$ORIGIN")
 install(TARGETS engine_editor engine_core
     RUNTIME DESTINATION . LIBRARY DESTINATION . ARCHIVE DESTINATION lib)
+if(WIN32)
+    install(TARGETS editor_hud RUNTIME DESTINATION .)
+endif()
 install(FILES README.md DESTINATION .)
-install(FILES docs/objects.md docs/threading.md DESTINATION docs)
+install(FILES docs/objects.md docs/threading.md docs/editor_ui.md DESTINATION docs)
 install(FILES src/engine/ui/third_party/imgui/LICENSE.txt DESTINATION licenses RENAME Dear-ImGui.txt)
 set(CPACK_GENERATOR ZIP)
 set(CPACK_PACKAGE_NAME Starter3DEngine)

@@ -5,3 +5,14 @@
 
 /project_notes.txt
 /imgui.ini
+
+/editor_layout.ini
+/engine.log
+/editor_hud.layout
+/editor_hud.layout.tmp
+/editor_bindings.cfg
+/editor_bindings.cfg.tmp
+/engine_editor.log
+/editor_hud.log
+/engine_editor.crash.log
+/editor_hud.crash.log

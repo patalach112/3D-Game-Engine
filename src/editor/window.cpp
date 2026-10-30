@@ -7,7 +7,7 @@ namespace editor {
 namespace {
 bool over_scene(HWND hwnd,LPARAM lp) {
     POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};
-    return app().ready && PtInRect(&app().viewport_bounds,p)
+    return app().ready && !app().hud_designer && !app().show_settings && scene_input_at(p.x,p.y)
         && !ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel)
         && GetActiveWindow()==hwnd;
 }
@@ -43,7 +43,7 @@ void apply_input_event(HWND hwnd,const engine::InputEvent& event) {
     else if (message==WM_KILLFOCUS || message==WM_CAPTURECHANGED) {
         g.orbit_input.rightDown=false; g.orbit_input.rightPressed=false;
     }
-    if (message==WM_KILLFOCUS) g.orbit_input.focused=false;
+    if (message==WM_KILLFOCUS) {g.orbit_input.focused=false;g.bindings_armed=false;}
     else if (message==WM_SETFOCUS) g.orbit_input.focused=true;
     if (event.kind==engine::InputKind::PointerMove || event.kind==engine::InputKind::PointerButton
         || event.kind==engine::InputKind::Wheel || event.kind==engine::InputKind::Focus)
@@ -125,28 +125,67 @@ void apply_input_event(HWND hwnd,const engine::InputEvent& event) {
     }
 }
 
+void apply_work_area_constraints(MINMAXINFO& limits,RECT monitor,RECT work,LONG minimum_width,LONG minimum_height) noexcept {
+    limits.ptMinTrackSize={minimum_width,minimum_height};
+    // ptMaxPosition is monitor-relative. Using rcWork rather than rcMonitor is
+    // what keeps an ordinary maximized borderless window clear of the taskbar,
+    // including taskbars on secondary monitors and on the top/left edge.
+    limits.ptMaxPosition={work.left-monitor.left,work.top-monitor.top};
+    limits.ptMaxSize={std::max<LONG>(1,work.right-work.left),std::max<LONG>(1,work.bottom-work.top)};
+}
+
 LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
     auto& g=app();
     engine::InputKind kind=engine::InputKind::Other;
     bool queued=true;
     switch (message) {
+    case WM_NCCALCSIZE:
+        if (wp && IsZoomed(hwnd)) {
+            auto* area=reinterpret_cast<NCCALCSIZE_PARAMS*>(lp);
+            MONITORINFO monitor{sizeof(MONITORINFO),{},{},0};
+            if (GetMonitorInfoW(MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST),&monitor))
+                area->rgrc[0]=monitor.rcWork;
+        }
+        return 0;
+    case WM_NCHITTEST: {
+        POINT point{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};
+        RECT rect{}; GetWindowRect(hwnd,&rect);
+        if (!IsZoomed(hwnd)) {
+            constexpr int border=7;
+            const bool left=point.x<rect.left+border,right=point.x>=rect.right-border;
+            const bool top=point.y<rect.top+border,bottom=point.y>=rect.bottom-border;
+            if (top && left) return HTTOPLEFT;
+            if (top && right) return HTTOPRIGHT;
+            if (bottom && left) return HTBOTTOMLEFT;
+            if (bottom && right) return HTBOTTOMRIGHT;
+            if (left) return HTLEFT;
+            if (right) return HTRIGHT;
+            if (top) return HTTOP;
+            if (bottom) return HTBOTTOM;
+        }
+        ScreenToClient(hwnd,&point);
+        return !g.menu_open && PtInRect(&g.title_drag_bounds,point)?HTCAPTION:HTCLIENT;
+    }
     case WM_PAINT: {
         PAINTSTRUCT paint{}; BeginPaint(hwnd,&paint); EndPaint(hwnd,&paint); return 0;
     }
     case WM_ERASEBKGND: return 1;
     case WM_GETMINMAXINFO: {
-        // Let Windows calculate the maximized rectangle from the monitor work
-        // area first. Returning immediately with only ptMinTrackSize filled can
-        // make a maximized window cover the taskbar, especially on a secondary
-        // monitor or when the taskbar is placed on the top/side of the screen.
-        const auto result=DefWindowProcW(hwnd,message,wp,lp);
         auto* limits=reinterpret_cast<MINMAXINFO*>(lp);
-        limits->ptMinTrackSize.x=900;
-        limits->ptMinTrackSize.y=600;
-        return result;
+        const LONG minimum_width=g.hud_loaded?static_cast<LONG>(g.hud.window_minimum.x):900;
+        const LONG minimum_height=g.hud_loaded?static_cast<LONG>(g.hud.window_minimum.y):600;
+        MONITORINFO monitor{sizeof(MONITORINFO),{},{},0};
+        if(GetMonitorInfoW(MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST),&monitor))
+            apply_work_area_constraints(*limits,monitor.rcMonitor,monitor.rcWork,minimum_width,minimum_height);
+        else limits->ptMinTrackSize={minimum_width,minimum_height};
+        return 0;
     }
     case WM_SIZE: g.minimized=wp==SIZE_MINIMIZED; return 0;
-    case WM_CLOSE: g.close_requested=true; return 0;
+    case WM_CLOSE:
+        LOG_INFO("startup","WM_CLOSE received (designer=%d dirty=%d)",g.hud_designer,g.hud_dirty);
+        if (g.hud_designer && g.hud_dirty) g.hud_confirm_close=true;
+        else g.close_requested=true;
+        return 0;
     case WM_DESTROY: g.close_requested=true; PostQuitMessage(0); return 0;
     case kWorkerWake: return 0;
     case WM_MOUSEMOVE: kind=engine::InputKind::PointerMove; break;

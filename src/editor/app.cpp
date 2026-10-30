@@ -78,16 +78,19 @@ void update_camera() {
 void update_layout() {
     App& g = app();
     // The Vulkan target covers the whole client area, including GPU UI panels.
-    g.left_width = std::clamp(g.left_width, 170, std::max(170, g.width - g.right_width - 300));
-    g.right_width = std::clamp(g.right_width, 240, std::max(240, g.width - g.left_width - 300));
-    g.bottom_height = std::clamp(g.bottom_height, 100,
-        std::max(100, g.height - kHeaderHeight - kFooterHeight - 200));
-    g.viewport_bounds = view_rect();
+    if (!g.docking_initialized) {
+        g.left_width = std::clamp(g.left_width, 170, std::max(170, g.width - g.right_width - 300));
+        g.right_width = std::clamp(g.right_width, 240, std::max(240, g.width - g.left_width - 300));
+        g.bottom_height = std::clamp(g.bottom_height, 100,
+            std::max(100, g.height - kHeaderHeight - kFooterHeight - 200));
+        g.viewport_bounds = view_rect();
+    }
     g.renderer.resize(g.width, g.height);
 }
 
 RECT view_rect() {
     const App& g = app();
+    if (g.docking_initialized) return g.viewport_bounds;
     // Exclude both vertical splitters and the workspace's horizontal splitter.
     return {g.left_width + 6, kHeaderHeight,
             g.width - g.right_width - 6, g.height - kFooterHeight - g.bottom_height - 6};

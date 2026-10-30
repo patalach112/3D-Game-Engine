@@ -25,10 +25,12 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
 #endif
 
 #include "engine/log.hpp"
+#include "engine/render/internal_types.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -38,169 +40,9 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
 #include <vector>
 
 namespace engine {
-namespace {
-constexpr float kPi = 3.14159265358979323846F;
-constexpr float kNearPlane = 0.08F;
-constexpr std::array<std::uint32_t, 3> kAxisColors{0x00E84C4CU, 0x005ACB70U, 0x004E91F2U};
-
-Vec3 add(Vec3 a, Vec3 b) { return {a.x+b.x,a.y+b.y,a.z+b.z}; }
-Vec3 subtract(Vec3 a, Vec3 b) { return {a.x-b.x,a.y-b.y,a.z-b.z}; }
-Vec3 multiply(Vec3 a,float n) { return {a.x*n,a.y*n,a.z*n}; }
-float dot(Vec3 a,Vec3 b) { return a.x*b.x+a.y*b.y+a.z*b.z; }
-Vec3 cross(Vec3 a,Vec3 b) { return {a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x}; }
-float length(Vec3 v) { return std::sqrt(dot(v,v)); }
-Vec3 normalize(Vec3 v) {
-    const float magnitude=length(v);
-    return magnitude<1.0e-6F?Vec3{0,0,1}:multiply(v,1.0F/magnitude);
-}
-
-struct Basis { Vec3 right,up,forward; };
-Basis camera_basis(const EditorCamera& camera) {
-    const Vec3 forward=normalize(subtract(camera.target,camera.position));
-    const Vec3 reference=std::abs(forward.y)>0.999F?Vec3{0,0,1}:Vec3{0,1,0};
-    const Vec3 right=normalize(cross(forward,reference));
-    return {right,normalize(cross(right,forward)),forward};
-}
-struct CameraPoint { float x,y,z; };
-CameraPoint to_camera(Vec3 world,const EditorCamera& camera,const Basis& basis) {
-    const Vec3 delta=subtract(world,camera.position);
-    return {dot(delta,basis.right),dot(delta,basis.up),dot(delta,basis.forward)};
-}
-struct MeshData {
-    std::vector<Vec3> vertices;
-    std::vector<std::array<int,3>> triangles;
-    std::vector<std::array<int,2>> edges;
-};
-
-MeshData make_primitive_mesh(PrimitiveType type) {
-    MeshData mesh;
-    if(type==PrimitiveType::Cube) {
-        for(int i=0;i<8;++i)
-            mesh.vertices.push_back({(i&1)?0.5F:-0.5F,(i&2)?0.5F:-0.5F,(i&4)?0.5F:-0.5F});
-        constexpr std::array<std::array<int,4>,6> faces{{
-            {{0,1,3,2}},{{4,6,7,5}},{{0,4,5,1}},{{2,3,7,6}},{{0,2,6,4}},{{1,5,7,3}}
-        }};
-        for(const auto& f:faces) {
-            mesh.triangles.push_back({f[0],f[1],f[2]});
-            mesh.triangles.push_back({f[0],f[2],f[3]});
-        }
-        mesh.edges={{{0,1}},{{1,3}},{{3,2}},{{2,0}},{{4,5}},{{5,7}},
-                    {{7,6}},{{6,4}},{{0,4}},{{1,5}},{{2,6}},{{3,7}}};
-    } else if(type==PrimitiveType::Plane) {
-        mesh.vertices={{-0.5F,0,-0.5F},{0.5F,0,-0.5F},{0.5F,0,0.5F},{-0.5F,0,0.5F}};
-        mesh.triangles={{{0,1,2}},{{0,2,3}}};
-        mesh.edges={{{0,1}},{{1,2}},{{2,3}},{{3,0}}};
-    } else if(type==PrimitiveType::Cylinder) {
-        constexpr int segments=20;
-        for(int ring=0;ring<2;++ring) for(int i=0;i<segments;++i) {
-            const float angle=2.0F*kPi*static_cast<float>(i)/static_cast<float>(segments);
-            mesh.vertices.push_back({0.5F*std::cos(angle),ring?0.5F:-0.5F,0.5F*std::sin(angle)});
-        }
-        const int bottom_center=static_cast<int>(mesh.vertices.size());
-        mesh.vertices.push_back({0,-0.5F,0});
-        const int top_center=static_cast<int>(mesh.vertices.size());
-        mesh.vertices.push_back({0,0.5F,0});
-        for(int i=0;i<segments;++i) {
-            const int next=(i+1)%segments;
-            mesh.triangles.push_back({i,next,segments+next});
-            mesh.triangles.push_back({i,segments+next,segments+i});
-            mesh.triangles.push_back({bottom_center,next,i});
-            mesh.triangles.push_back({top_center,segments+i,segments+next});
-            mesh.edges.push_back({i,next});
-            mesh.edges.push_back({segments+i,segments+next});
-            mesh.edges.push_back({i,segments+i});
-        }
-    } else {
-        constexpr int segments=16, latitude_steps=8;
-        mesh.vertices.push_back({0,0.5F,0});
-        for(int latitude=1;latitude<latitude_steps;++latitude) {
-            const float phi=kPi*static_cast<float>(latitude)/static_cast<float>(latitude_steps);
-            const float y=0.5F*std::cos(phi),radius=0.5F*std::sin(phi);
-            for(int i=0;i<segments;++i) {
-                const float theta=2.0F*kPi*static_cast<float>(i)/static_cast<float>(segments);
-                mesh.vertices.push_back({radius*std::cos(theta),y,radius*std::sin(theta)});
-            }
-        }
-        const int bottom=static_cast<int>(mesh.vertices.size()),first_ring=1;
-        mesh.vertices.push_back({0,-0.5F,0});
-        for(int i=0;i<segments;++i)
-            mesh.triangles.push_back({0,first_ring+i,first_ring+(i+1)%segments});
-        for(int ring=0;ring<latitude_steps-2;++ring) {
-            const int upper=first_ring+ring*segments,lower=upper+segments;
-            for(int i=0;i<segments;++i) {
-                const int next=(i+1)%segments;
-                mesh.triangles.push_back({upper+i,lower+i,upper+next});
-                mesh.triangles.push_back({upper+next,lower+i,lower+next});
-            }
-        }
-        const int last_ring=first_ring+(latitude_steps-2)*segments;
-        for(int i=0;i<segments;++i)
-            mesh.triangles.push_back({bottom,last_ring+(i+1)%segments,last_ring+i});
-    }
-    if (type == PrimitiveType::Sphere) {
-        for (const auto& t : mesh.triangles) {
-            mesh.edges.push_back({t[0], t[1]});
-            mesh.edges.push_back({t[1], t[2]});
-            mesh.edges.push_back({t[2], t[0]});
-        }
-    }
-    return mesh;
-}
-
-// Generuje mesh raz na typ primitywny i wykorzystuje go w każdym kadrze.
-// Bez cache po każdym obiekcie tworzone były trzy std::vector na frame.
-const MeshData& primitive_mesh(PrimitiveType type) {
-    static const std::array<MeshData, 4> cache{
-        make_primitive_mesh(PrimitiveType::Cube),
-        make_primitive_mesh(PrimitiveType::Sphere),
-        make_primitive_mesh(PrimitiveType::Cylinder),
-        make_primitive_mesh(PrimitiveType::Plane),
-    };
-    const auto index=static_cast<std::size_t>(type);
-    if (index>=cache.size()) throw std::invalid_argument("Invalid primitive type");
-    return cache[index];
-}
-} // namespace
-
-ScreenPoint project_to_screen(Vec3 world,const EditorCamera& camera,int width,int height) {
-    if(width<=0||height<=0) return {};
-    const Basis basis=camera_basis(camera);
-    const CameraPoint p=to_camera(world,camera,basis);
-    if(p.z<kNearPlane) return {};
-    const float focal=(static_cast<float>(height)*0.5F)/std::tan(camera.vertical_fov_degrees*kPi/360.0F);
-    return {static_cast<float>(width)*0.5F+p.x*focal/p.z,
-            static_cast<float>(height)*0.5F-p.y*focal/p.z,p.z,true};
-}
-
-Ray3 screen_ray(float x,float y,const EditorCamera& camera,int width,int height) {
-    const Basis basis=camera_basis(camera);
-    const float tangent=std::tan(camera.vertical_fov_degrees*kPi/360.0F);
-    const float nx=(2.0F*x/static_cast<float>(std::max(1,width))-1.0F)
-                  *(static_cast<float>(width)/static_cast<float>(std::max(1,height)))*tangent;
-    const float ny=(1.0F-2.0F*y/static_cast<float>(std::max(1,height)))*tangent;
-    return {camera.position,normalize(add(basis.forward,add(multiply(basis.right,nx),multiply(basis.up,ny))))};
-}
+using namespace engine::internal;
 
 namespace {
-struct DebugVertex {
-    Vec3 position;
-    Vec3 color;
-    float grid{};
-};
-struct DebugAttributes { Vec3 color; float grid; };
-static_assert(sizeof(DebugAttributes)==16);
-struct CameraPush {
-    std::array<float, 4> right, up, forward, eye, projection;
-};
-static_assert(sizeof(CameraPush) == 80);
-static_assert(sizeof(DebugVertex) == 28); // CPU construction only, never uploaded as vertices.
-
-Vec3 rgb(std::uint32_t value) {
-    return {static_cast<float>((value >> 16U) & 255U) / 255.0F,
-            static_cast<float>((value >> 8U) & 255U) / 255.0F,
-            static_cast<float>(value & 255U) / 255.0F};
-}
-bool finite(Vec3 p) { return std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z); }
 void check(VkResult result, const char* operation) {
     if (result != VK_SUCCESS)
         throw std::runtime_error(std::string(operation) + " (VkResult " + std::to_string(result) + ")");
@@ -214,147 +56,13 @@ template<class T> bool named(const std::vector<T>& entries, const char* name) {
             return std::strcmp(entry.layerName, name) == 0;
     });
 }
-VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT,
+VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     VkDebugUtilsMessageTypeFlagsEXT, const VkDebugUtilsMessengerCallbackDataEXT* message, void*) {
-    std::cerr << "Vulkan validation: " << message->pMessage << '\n';
+    try {
+        log_write((severity&VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)?LogLevel::Error:LogLevel::Warn,
+            "vulkan",message->pMessage);
+    } catch (...) {} // Never unwind through the driver's C callback.
     return VK_FALSE;
-}
-struct FrameGeometry {
-    std::vector<DebugVertex> vertices;
-    GeometryBuffer geometry;
-    std::uint32_t lines{}, overlay_lines{}, overlay_triangles{};
-};
-FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, EntityId selected,
-                             int width, int height, bool grid_visible) {
-    std::vector<DebugVertex> lines, overlay_lines, overlay_triangles;
-    const auto line = [](std::vector<DebugVertex>& out, Vec3 a, Vec3 b, Vec3 color, float grid = 0.0F) {
-        out.push_back({a, color, grid}); out.push_back({b, color, grid});
-    };
-    for (const auto& entity : scene.entities()) {
-        if (entity.primitive!=PrimitiveType::Cube && entity.id!=selected) continue;
-        const auto& mesh = primitive_mesh(entity.primitive);
-        const auto& t = entity.transform;
-        if (!finite(t.position) || !finite(t.rotation) || !finite(t.scale)) continue;
-        const auto rotation=unpack_rotation(pack_rotation(t.rotation));
-        const float rx=rotation.x*kPi/180.0F, ry=rotation.y*kPi/180.0F, rz=rotation.z*kPi/180.0F;
-        const float cx=std::cos(rx),sx=std::sin(rx),cy=std::cos(ry),sy=std::sin(ry),cz=std::cos(rz),sz=std::sin(rz);
-        std::vector<Vec3> world;
-        world.reserve(mesh.vertices.size());
-        for (auto p : mesh.vertices) {
-            p={p.x*t.scale.x,p.y*t.scale.y,p.z*t.scale.z};
-            const Vec3 px{p.x,p.y*cx-p.z*sx,p.y*sx+p.z*cx};
-            const Vec3 py{px.x*cy+px.z*sy,px.y,-px.x*sy+px.z*cy};
-            world.push_back(add({py.x*cz-py.y*sz,py.x*sz+py.y*cz,py.z}, t.position));
-        }
-        if (entity.primitive == PrimitiveType::Cube || entity.id == selected) {
-            for (const auto& edge : mesh.edges)
-                line(lines, world[edge[0]], world[edge[1]],
-                     rgb(entity.id == selected ? 0x00F1A06BU : 0x00555558U));
-        }
-    }
-
-    GeometryBuilder builder;
-    std::array<MeshId,4> cached{};
-    std::array<bool,4> has_mesh{};
-    for (const auto& entity:scene.entities()) {
-        const auto& t=entity.transform;
-        if (!finite(t.position)||!finite(t.rotation)||!finite(t.scale)) continue;
-        const bool uniform=t.scale.x==t.scale.y&&t.scale.y==t.scale.z;
-        const auto type=static_cast<std::size_t>(entity.primitive);
-        const auto& mesh=primitive_mesh(entity.primitive);
-        MeshId id{};
-        if (uniform&&has_mesh[type]) id=cached[type];
-        else {
-            std::vector<engine::Vertex> vertices;
-            std::vector<std::uint32_t> indices;
-            const auto local=[&](Vec3 p) { return uniform?p:Vec3{p.x*t.scale.x,p.y*t.scale.y,p.z*t.scale.z}; };
-            for (const auto& triangle:mesh.triangles) {
-                const auto a=local(mesh.vertices[triangle[0]]),b=local(mesh.vertices[triangle[1]]),c=local(mesh.vertices[triangle[2]]);
-                const auto normal=normalize(cross(subtract(b,a),subtract(c,a)));
-                for (auto p:{a,b,c}) { indices.push_back(static_cast<std::uint32_t>(vertices.size())); vertices.push_back(make_vertex(p,normal)); }
-            }
-            id=builder.add_mesh(vertices,indices);
-            if (uniform) { cached[type]=id; has_mesh[type]=true; }
-        }
-        ObjectData object;
-        object.position=t.position; object.rotation=pack_rotation(t.rotation); object.scale=uniform?t.scale.x:1;
-        const auto base=entity.id==selected?0x00D8D8DAU:entity.primitive==PrimitiveType::Sphere?0x007FA8D8U:
-            entity.primitive==PrimitiveType::Cylinder?0x007DAF82U:entity.primitive==PrimitiveType::Plane?0x00B2A27DU:0x00A7A7AAU;
-        const auto tint=rgb(base); builder.add_object(id,object,{tint.x,tint.y,tint.z,1});
-    }
-    // Ground grid bounds follow the frustum, rather than a fixed little patch.
-    const Basis basis=camera_basis(camera);
-    const float v_tan=std::tan(camera.vertical_fov_degrees*kPi/360.0F);
-    if (grid_visible) {
-        const float h_tan=v_tan*static_cast<float>(width)/static_cast<float>(height);
-        float gx0=camera.position.x-10, gx1=camera.position.x+10;
-        float gz0=camera.position.z-10, gz1=camera.position.z+10;
-        const float horizon=std::max(50.0F,std::abs(camera.position.y)*100.0F);
-        for (float x : {-1.0F,1.0F}) for (float y : {-1.0F,1.0F}) {
-            const Vec3 dir=add(basis.forward,add(multiply(basis.right,x*h_tan),multiply(basis.up,y*v_tan)));
-            const float hit_t=std::abs(dir.y)>0.0001F?-camera.position.y/dir.y:-1;
-            const float distance=hit_t>0?std::min(hit_t,horizon):horizon;
-            const Vec3 hit=add(camera.position,multiply(dir,distance));
-            gx0=std::min(gx0,hit.x); gx1=std::max(gx1,hit.x);
-            gz0=std::min(gz0,hit.z); gz1=std::max(gz1,hit.z);
-        }
-        const float range=std::max(gx1-gx0,gz1-gz0);
-        // Nice-steps: wybierz krok z serii 1-2-5-10-20-50... aby linie miały rozmiar ~1/10 range.
-        const float raw_step=range/12.0F;
-        float magnitude=1.0F;
-        while (magnitude*2.0F<=raw_step) magnitude*=2.0F;
-        float step=magnitude;
-        while (step*5.0F<=raw_step) step*=5.0F;
-        step=std::max(step,1.0F);
-        // Bounded iteration also protects against hostile/very large scene coordinates.
-        for (int axis=0;axis<2;++axis) {
-            const float start=std::floor((axis?gz0:gx0)/step)*step;
-            const float end=axis?gz1:gx1;
-            for (int i=0;i<2048;++i) {
-                const float c=start+static_cast<float>(i)*step;
-                if (c>end) break;
-                const bool major=std::abs(std::remainder(c,5.0F*step))<0.01F;
-                const Vec3 color=rgb(major?0x008A8A90U:0x005A5A5EU);
-                if (axis) line(lines,{gx0-20,0,c},{gx1+20,0,c},color,1);
-                else line(lines,{c,0,gz0-20},{c,0,gz1+20},color,1);
-            }
-        }
-    }
-    if (const Entity* entity=scene.find_entity(selected)) {
-        const Vec3 center=entity->transform.position;
-        const float distance=length(subtract(camera.position,center));
-        const float handle_length=std::clamp(distance*0.13F,0.8F,2.0F);
-        const float pixel_radius=static_cast<float>(std::clamp(static_cast<int>(std::lround(height*0.011F)),7,12));
-        for (int axis=0;axis<3;++axis) for (float sign : {-1.0F,1.0F}) {
-            const Vec3 dir=axis==0?Vec3{1,0,0}:axis==1?Vec3{0,1,0}:Vec3{0,0,1};
-            const Vec3 handle=add(center,multiply(dir,sign*handle_length));
-            const float depth=to_camera(handle,camera,basis).z;
-            if (depth<kNearPlane) continue;
-            const Vec3 color=rgb(kAxisColors[axis]);
-            line(overlay_lines,center,handle,color);
-            const float radius=pixel_radius*2.0F*depth*v_tan/static_cast<float>(height);
-            for (int i=0;i<24;++i) {
-                const auto rim=[&](int index) {
-                    const float a=2*kPi*static_cast<float>(index)/24.0F;
-                    return add(handle,add(multiply(basis.right,std::cos(a)*radius),multiply(basis.up,std::sin(a)*radius)));
-                };
-                overlay_triangles.push_back({handle,color});
-                overlay_triangles.push_back({rim(i),color});
-                overlay_triangles.push_back({rim(i+1),color});
-            }
-        }
-    }
-    FrameGeometry frame;
-    const std::size_t total=lines.size()+overlay_lines.size()+overlay_triangles.size();
-    if (total>std::numeric_limits<std::uint32_t>::max()) throw std::length_error("Scene has too many vertices");
-    frame.lines=static_cast<std::uint32_t>(lines.size());
-    frame.overlay_lines=static_cast<std::uint32_t>(overlay_lines.size());
-    frame.overlay_triangles=static_cast<std::uint32_t>(overlay_triangles.size());
-    frame.vertices.reserve(total);
-    for (const auto* batch : {&lines,&overlay_lines,&overlay_triangles})
-        frame.vertices.insert(frame.vertices.end(),batch->begin(),batch->end());
-    frame.geometry=builder.build();
-    return frame;
 }
 } // namespace
 
@@ -362,6 +70,11 @@ struct VulkanRenderer::Impl {
     VkInstance instance{};
     VkDebugUtilsMessengerEXT debug{};
     VkPhysicalDevice physical{};
+    VkPhysicalDeviceProperties device_properties{};
+    FrameGeometryCache frame_cache;
+    RenderStatistics stats;
+    bool descriptors_dirty{true};
+    VkDeviceSize descriptor_object_bytes{},descriptor_indirect_bytes{};
     VkDevice device{};
     VkQueue graphics_queue{}, present_queue{};
     std::uint32_t graphics_family{}, present_family{};
@@ -397,6 +110,11 @@ struct VulkanRenderer::Impl {
     struct Buffer { VkBuffer handle{}; VkDeviceMemory memory{}; VkDeviceSize capacity{}; void* mapped{}; } vertices, readback, geometry, object_data, indirect, ui_uv;
     VkFramebuffer framebuffer{};
     int target_width{}, target_height{};
+    std::vector<DebugAttributes> scratch_attributes;
+    std::vector<engine::Vertex> scratch_debug;
+    std::vector<std::uint32_t> scratch_debug_indices,scratch_hud_indices;
+    std::vector<Vertex_hud> scratch_hud;
+    std::vector<Vec2> scratch_uv;
     bool rendered{};
     bool recording{}; // Scene pass and presentation share one submission on Windows.
 
@@ -541,7 +259,7 @@ void VulkanRenderer::Impl::init() {
         const int score=properties.deviceType==VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU?100:
             properties.deviceType==VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU?50:10;
         if (score>best) {
-            best=score; physical=candidate; name=properties.deviceName; depth_format=chosen_depth;
+            best=score; physical=candidate; device_properties=properties; name=properties.deviceName; depth_format=chosen_depth;
             graphics_family=*graphics; present_family=present.value_or(*graphics);
         }
     }
@@ -825,6 +543,7 @@ void VulkanRenderer::Impl::ensure_buffer(Buffer& buffer, VkDeviceSize size, VkBu
     check(vkDeviceWaitIdle(device),"Wait before growing buffer");
     const VkDeviceSize capacity=std::max({size,buffer.capacity*2,VkDeviceSize{4096}});
     destroy_buffer(buffer);
+    if(&buffer==&object_data || &buffer==&indirect)descriptors_dirty=true; // Recreated handles may reuse numeric values.
     VkBufferCreateInfo info{};
     info.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO; info.size=capacity;
     info.usage=usage; info.sharingMode=VK_SHARING_MODE_EXCLUSIVE;
@@ -895,12 +614,14 @@ void VulkanRenderer::Impl::submit(VkSemaphore wait, VkSemaphore signal) {
 void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& camera,
                                 int width, int height, std::vector<std::uint32_t>& pixels,
                                 RenderViewport scene_view, bool draw_ui, Vec3 clear_color) {
-    auto packed=frame.geometry;
-    const auto custom_hud_indices=packed.layout.hudIndexCount;
-    const auto custom_hud_vertices=packed.layout.hudVertexCount;
-    const auto debug_base=packed.layout.sceneVertexCount;
-    const auto debug_first=packed.layout.sceneIndexCount;
-    std::vector<DebugAttributes> debug_attributes;
+    // Import once and pack once, rather than rebuilding the entire buffer after
+    // debug geometry and then importing/rebuilding it a second time for ImGui.
+    auto builder=GeometryBuilder::from_buffer(frame.geometry);
+    const auto custom_hud_indices=frame.geometry.layout.hudIndexCount;
+    const auto custom_hud_vertices=frame.geometry.layout.hudVertexCount;
+    const auto debug_base=frame.geometry.layout.sceneVertexCount;
+    const auto debug_first=frame.geometry.layout.sceneIndexCount;
+    auto& debug_attributes=scratch_attributes;debug_attributes.clear();
     float debug_scale=1;
     if (!frame.vertices.empty()) {
         double extent=0;
@@ -909,9 +630,9 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
                 std::abs(static_cast<double>(v.position.y)-camera.position.y),std::abs(static_cast<double>(v.position.z)-camera.position.z)});
         }
         debug_scale=static_cast<float>(std::max(1.0,extent/60000.0));
-        std::vector<engine::Vertex> packed_debug;
-        std::vector<std::uint32_t> debug_indices;
-        packed_debug.reserve(frame.vertices.size()); debug_attributes.reserve(frame.vertices.size());
+        auto& packed_debug=scratch_debug;packed_debug.clear();
+        auto& debug_indices=scratch_debug_indices;debug_indices.clear();
+        packed_debug.reserve(frame.vertices.size()); debug_attributes.reserve(frame.vertices.size());debug_indices.reserve(frame.vertices.size()+2);
         for (const auto& v:frame.vertices) {
             const Vec3 p{static_cast<float>((static_cast<double>(v.position.x)-camera.position.x)/debug_scale),
                 static_cast<float>((static_cast<double>(v.position.y)-camera.position.y)/debug_scale),
@@ -921,28 +642,27 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
         }
         // Mesh ranges are metadata only; debug topology is selected per batch below.
         while (debug_indices.size()%3) debug_indices.push_back(0);
-        auto builder=GeometryBuilder::from_buffer(packed);
-        builder.add_mesh(packed_debug,debug_indices); packed=builder.build();
+        builder.add_mesh(packed_debug,debug_indices);
     }
-    std::vector<Vec2> uv;
+    auto& uv=scratch_uv;uv.clear();
     if (draw_ui) {
-        auto builder=GeometryBuilder::from_buffer(packed);
         const auto* data=ImGui::GetDrawData();
-        std::vector<Vertex_hud> hud;
-        std::vector<std::uint32_t> indices;
+        auto& hud=scratch_hud;hud.clear();
+        auto& indices=scratch_hud_indices;indices.clear();
         hud.reserve(static_cast<std::size_t>(data->TotalVtxCount)); uv.reserve(hud.capacity());
         indices.reserve(static_cast<std::size_t>(data->TotalIdxCount));
         for (const auto* list:data->CmdLists) {
             for (const auto& v:list->VtxBuffer) {
-                const auto color=ImGui::ColorConvertU32ToFloat4(v.col);
-                hud.push_back({{v.pos.x,v.pos.y},{color.x,color.y,color.z,color.w}}); uv.push_back({v.uv.x,v.uv.y});
+                const auto tint=ImGui::ColorConvertU32ToFloat4(v.col);
+                hud.push_back({{v.pos.x,v.pos.y},{tint.x,tint.y,tint.z,tint.w}}); uv.push_back({v.uv.x,v.uv.y});
             }
             for (auto index:list->IdxBuffer) indices.push_back(index);
         }
-        builder.append_ui(hud,indices); packed=builder.build();
+        builder.append_ui(hud,indices);
     }
+    const auto packed=builder.build();
     const auto object_count=static_cast<std::uint32_t>(packed.objects.size());
-    VkPhysicalDeviceProperties limits{}; vkGetPhysicalDeviceProperties(physical,&limits);
+    const auto& limits=device_properties;
     const auto object_bytes=packed.objects.size()*sizeof(ObjectData);
     const auto indirect_bytes=packed.commands.size()*sizeof(DrawIndexedIndirectCommand);
     if (object_bytes>limits.limits.maxStorageBufferRange || indirect_bytes>limits.limits.maxStorageBufferRange
@@ -975,7 +695,10 @@ void VulkanRenderer::Impl::draw(const FrameGeometry& frame, const EditorCamera& 
             writes[i].dstBinding=i; writes[i].descriptorCount=1; writes[i].descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             writes[i].pBufferInfo=&descriptors[i];
         }
-        vkUpdateDescriptorSets(device,2,writes,0,nullptr);
+        if(descriptors_dirty || descriptor_object_bytes!=object_bytes || descriptor_indirect_bytes!=indirect_bytes) {
+            vkUpdateDescriptorSets(device,2,writes,0,nullptr);
+            descriptors_dirty=false;descriptor_object_bytes=object_bytes;descriptor_indirect_bytes=indirect_bytes;++stats.descriptor_updates;
+        }
         vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,cull_pipeline);
         vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,cull_layout,0,1,&geometry_set,0,nullptr);
         vkCmdPushConstants(command,cull_layout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof(push),&push);
@@ -1383,6 +1106,7 @@ bool VulkanRenderer::handle_ui_message(void* window, unsigned int message,
 unsigned int VulkanRenderer::antialiasing_samples() const noexcept {
     return impl_?static_cast<unsigned int>(impl_->samples):1;
 }
+RenderStatistics VulkanRenderer::statistics() const noexcept {return impl_?impl_->stats:RenderStatistics{};}
 void VulkanRenderer::set_clear_color(Vec3 color) {
     if (!finite(color) || color.x < 0.0F || color.x > 1.0F
         || color.y < 0.0F || color.y > 1.0F || color.z < 0.0F || color.z > 1.0F)
@@ -1412,7 +1136,10 @@ void VulkanRenderer::render(const Scene& scene, const EditorCamera& camera, Enti
         if (impl_->ui_frame_open) finish_ui_frame();
         if (impl_->ui_frame_ready) ImGui::SetCurrentContext(impl_->ui);
         impl_->ui_frame_ready=false;
-        const auto frame=scene_geometry(scene,camera,selected,viewport.width,viewport.height,grid_visible_);
+        const auto started=std::chrono::steady_clock::now();
+        const auto& frame=impl_->frame_cache.update(scene,camera,selected,viewport.width,viewport.height,grid_visible_,gizmo_mode_);
+        impl_->stats.geometry_cpu_us=std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-started).count();
+        impl_->stats.geometry_builds=impl_->frame_cache.builds;impl_->stats.geometry_cache_hits=impl_->frame_cache.hits;
         impl_->draw(frame,camera,width_,height_,pixels_,viewport,draw_ui,clear_color_);
     } catch (...) { shutdown(); throw; }
 }

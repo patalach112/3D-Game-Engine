@@ -13,6 +13,10 @@
 #include "engine/input.hpp"
 #include "engine/render/render_worker.hpp"
 #include <chrono>
+#include <deque>
+#include <array>
+#include <unordered_map>
+#include "engine/hud/document.hpp"
 #include <string>
 
 namespace editor {
@@ -24,7 +28,16 @@ struct App {
     engine::EditorCamera camera;
     engine::EntityId selected{};
     RECT viewport_bounds{};
-    bool ready{}, renderer_failed{};
+    bool ready{}, renderer_failed{}, safe_mode{};
+    std::uint64_t submitted_frames{};
+    engine::hud::Document hud;
+    std::filesystem::path hud_path;
+    bool hud_loaded{}, hud_designer{}, hud_dirty{}, hud_preview{}, hud_save_requested{}, hud_confirm_close{};
+    bool hud_reset{}, hud_inspector{true};
+    engine::hud::Id hud_selected{}, hud_focus{}, hud_hit{}, hud_hit_panel{}, hud_hit_window{};
+    engine::hud::Id hud_context{}, hud_context_panel{}, hud_context_window{};
+    std::string hud_message, scene_window_name;
+    std::unordered_map<engine::hud::Id,std::array<char,4097>> hud_inputs;
     int width{1280}, height{800};
     int left_width{250}, right_width{320}, bottom_height{180};
     engine::OrbitState orbit, displayed_orbit;
@@ -33,6 +46,26 @@ struct App {
     std::unique_ptr<engine::InputProcessor> inputs;
     std::unique_ptr<engine::RenderWorker> render_worker;
     bool close_requested{}, minimized{};
+    HWND hwnd{};
+    RECT title_drag_bounds{};
+    bool menu_open{}, docking_initialized{}, viewport_visible{}, scene_floating{};
+    ImDrawList* scene_drawlist{};
+    bool reset_layout{}, show_hierarchy{true}, show_inspector{true}, show_scene{true};
+    bool show_console{true}, show_resources{true}, show_notes{true}, show_renderer{true};
+    bool show_settings{}, focus_settings{}, settings_hovered{};
+    std::vector<engine::hud::Binding> live_bindings;
+    bool bindings_initialized{}, binding_capture_armed{}, binding_scroll_last{}, bindings_armed{};
+    int binding_capture{-1}, binding_capture_frame{}, binding_consumed_frame{-1}, binding_pointer_frame{-1};
+    std::string binding_message;
+    int settings_tab{-1};
+    ImGuiTextFilter console_filter;
+    bool console_levels[4]{true,true,true,true};
+    bool console_auto_scroll{true};
+    std::uint64_t console_clear_sequence{}, console_seen_sequence{};
+    struct ConsoleRow { std::string text; int level{}; };
+    std::deque<ConsoleRow> console_rows;
+    std::uint64_t console_loaded_sequence{};
+    char console_command[256]{};
     unsigned native_buttons{};
 
     // 0 means unlimited. The deadline is managed by the message-loop frame pacer.
@@ -80,6 +113,7 @@ void update_camera();
 void update_layout();
 RECT view_rect();
 void draw_ui();
+bool scene_input_at(int x,int y);
 void render_frame(HWND hwnd);
 void reset_frame_timing();
 void apply_input_event(HWND hwnd,const engine::InputEvent& event);
@@ -95,6 +129,9 @@ bool hit_gizmo(int sx, int sy, int view_w, int view_h, engine::Entity& entity);
 int gizmo_hit(int sx, int sy, int view_w, int view_h, engine::Entity& entity);
 
 // Procedurowa procedura okna.
+// Apply a monitor's work area to WM_GETMINMAXINFO. Kept separate from the
+// Win32 callback so multi-monitor/taskbar geometry can be tested headlessly.
+void apply_work_area_constraints(MINMAXINFO& limits,RECT monitor,RECT work,LONG minimum_width,LONG minimum_height) noexcept;
 LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp);
 
 } // namespace editor

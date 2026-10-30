@@ -30,8 +30,9 @@ w konfiguracji Debug, jeśli są zainstalowane. Ich brak nie blokuje startu.
 ### Windows
 
 Cały **obszar klienta** głównego okna ma jedną powierzchnię `VkSurfaceKHR` i swapchain.
-Nie ma już osobnego HWND dla widoku 3D ani warstwy paneli GDI. Ramkę systemową,
-pasek tytułu i natywne okno IME nadal obsługuje Windows/DWM.
+Nie ma osobnego HWND dla widoku 3D ani warstwy paneli GDI. Edytor ma własny
+pasek tytułu i menu Vulkan; przeciąganie, resize, minimalizacja i maksymalizacja
+korzystają z natywnych komunikatów Windows. Natywne okno IME obsługuje Windows.
 
 ```text
 Scene → geometria → viewport + scissor 3D → kolor/depth MSAA
@@ -43,9 +44,9 @@ UI + font atlas → trójkąty + alpha blending w tym samym render passie
 `BeginPaint`/`EndPaint` wyłącznie zatwierdzają obszar uszkodzenia Win32.
 Zmiana rozmiaru okna odtwarza zasoby; zmiana podziału paneli zmienia viewport,
 bez tworzenia okien potomnych. Minimalizacja zatrzymuje rysowanie, a błędy
-`OUT_OF_DATE`/`SUBOPTIMAL` odtwarzają swapchain. UI odświeża się co około 16 ms
-(timer Win32), aby działały hover, kursor tekstowy i przeciąganie również bez
-zmian sceny. To nie jest gwarancja 60 FPS.
+`OUT_OF_DATE`/`SUBOPTIMAL` odtwarzają swapchain. UI odświeża się stale, domyślnie bez limitu FPS; opcjonalny limit jest dostępny
+w ustawieniach grafiki. Pętla komunikatów pozostaje responsywna podczas pracy
+wątku Vulkan.
 
 Backend współdzieli jeden zestaw zasobów klatki, chroniony fence przed ponownym
 użyciem. Semafory prezentacji są osobne na obraz swapchaina. Nie blokuje CPU po
@@ -63,12 +64,72 @@ Można użyć sprzętowego ICD albo programowego ICD (np. Mesa lavapipe / SwiftS
 w CI. Programowy ICD nadal wykonuje polecenia Vulkan; projekt nie ma fallbacku
 na poprzedni rasteryzator CPU. `pixels()` nie jest zapełniane w trybie swapchaina.
 
+## Panele, menu i konsola
+
+Edytor Windows używa Dear ImGui **1.91.9b-docking**, renderowanego przez Vulkan.
+Panele można dokować, odpinać, skalować i łączyć w zakładki wewnątrz głównego
+okna; projektant `editor_hud.exe` zapisuje pełny HUD w `editor_hud.layout` obok EXE,
+a `engine_editor.exe` wczytuje go przy starcie. Konsola na dole ma poziomy
+DEBUG/INFO/WARN/ERROR, filtr, kopiowanie, czyszczenie i komendy (`help`).
+Menu **Plik** zawiera nieaktywne Import/Eksport oraz Ustawienia, **Narzędzia**
+przełącza ruch/obrót/skalę gizma, a **Dodaj** ma podmenu otwierane po najechaniu:
+**Obiekty** (cztery dotychczasowe typy) oraz **Płaszczyzna** (koło 2D i kwadrat 2D).
+Szczegóły i lista testów: [docs/editor_ui.md](docs/editor_ui.md).
+
 ## Budowanie
 
 Wymagane: CMake 3.20+, kompilator C++20, NASM na x86-64, nagłówki/biblioteka Vulkan 1.1+,
 **glslc albo glslangValidator** do kompilacji shaderów oraz sterownik Vulkan.
 
 ### Windows
+
+Projekt używa pliku `CMakeLists.txt` (nie `cmake.txt`). Dla Visual Studio można
+budować z PowerShella, bez ręcznego `mkdir` i przechodzenia do katalogu build:
+
+```powershell
+cmake -S . -B build
+cmake --build build --config Release --parallel
+.\build\Release\editor_hud.exe    # projektowanie, Ctrl+S zapisuje HUD
+.\build\Release\engine_editor.exe # uruchomienie z zapisanym HUD-em
+```
+
+Domyślny build nie kompiluje testów. W dotychczasowym buildzie z testami ON
+wyłącz je przez `cmake -S . -B build -DBUILD_TESTING=OFF`. Deweloperskie testy
+pozostają dostępne po jawnym `-DBUILD_TESTING=ON` (tak robi CI).
+Projektant pozwala edytować menu, okna, panele, przyciski, tekst, wpisywarki i
+zagnieżdżone listy, minima, odstępy oraz wspólne/własne zaokrąglenia.
+Minimalizacja/maksymalizacja/zamknięcie pozostają nieedytowalne.
+Ustawienia są osobnym, niedokowalnym oknem z zakładkami Podstawowe, Grafika
+oraz Bindy. W projektancie edytujesz domyślne bindy (bez wykonywania ich funkcji),
+a zwykły edytor zapisuje własne przypisania osobno w `editor_bindings.cfg`.
+Szczegóły i opis optymalizacji cache geometrii: [docs/editor_ui.md](docs/editor_ui.md).
+
+Jeśli jesteś już w `build`, odpowiednikiem jest `cmake ..`, następnie
+`cmake --build . --config Release` i `.\Release\engine_editor.exe`.
+DLL `engine.dll` musi pozostać obok EXE. Nie mieszaj DLL z Debug i EXE z Release
+ani bibliotek zbudowanych różnymi wersjami MSVC/STL. CMake ustawia wspólny CRT
+`/MD` w Release i `/MDd` w Debug oraz UTF-8 dla wszystkich źródeł C++.
+
+Jeśli zwykły edytor nie pokazuje okna, spróbuj uruchomienia bez zapisanego
+HUD-u i własnych bindów (pliki nie są kasowane ani nadpisywane):
+
+```powershell
+.\build\Release\engine_editor.exe --safe-mode
+```
+
+Każdy program ma teraz osobny log: `engine_editor.log` / `editor_hud.log`
+oraz log awarii natywnych/assertów: `engine_editor.crash.log` /
+`editor_hud.crash.log`. Powstają w **katalogu roboczym**, niekoniecznie obok EXE;
+w powyższym przykładzie jest to katalog, z którego wydano polecenie.
+Log rozróżnia inicjalizację od faktycznego pokazania okna i pierwszej ukończonej
+klatki Vulkan. Pusty plik `.crash.log` sam w sobie nie oznacza awarii.
+Bindy runtime uzbrajają się dopiero po puszczeniu klawiszy/przycisków użytych
+do uruchomienia aplikacji; projektant nadal nie wykonuje przypisanych akcji.
+
+Komunikaty konfiguracji o nieznalezieniu `pthread` są normalne na Windows,
+jeśli kończą się `Found Threads: TRUE`. Błędu C2660 z niezgodną sygnaturą
+`scene_geometry` nie naprawia czyszczenie builda — wymaga zgodnych źródeł
+renderera i jego nagłówka.
 
 Zainstaluj Vulkan SDK, NASM (dostępny w PATH) i sterownik GPU z obsługą Vulkan. Uruchom nowy terminal,
 żeby CMake widział `VULKAN_SDK` i narzędzia SDK. Przykład z Visual Studio 2022:

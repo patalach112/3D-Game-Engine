@@ -16,7 +16,9 @@ enum class PrimitiveType : std::uint8_t {
     Cube,
     Sphere,
     Cylinder,
-    Plane
+    Plane,
+    Circle2D, // Flat XY disk. Append values to preserve existing scene IDs.
+    Square2D, // Flat XY square.
 };
 
 struct Transform {
@@ -32,12 +34,12 @@ struct Entity {
     Transform transform{};
 };
 
-class ENGINE_API Scene {
+class Scene {
 public:
-    [[nodiscard]] Entity& create_entity(std::string name, PrimitiveType primitive = PrimitiveType::Cube);
-    [[nodiscard]] Entity* find_entity(EntityId id);
-    [[nodiscard]] const Entity* find_entity(EntityId id) const;
-    [[nodiscard]] bool remove_entity(EntityId id);
+    [[nodiscard]] ENGINE_API Entity& create_entity(std::string name, PrimitiveType primitive = PrimitiveType::Cube);
+    [[nodiscard]] ENGINE_API Entity* find_entity(EntityId id);
+    [[nodiscard]] ENGINE_API const Entity* find_entity(EntityId id) const;
+    [[nodiscard]] ENGINE_API bool remove_entity(EntityId id);
     [[nodiscard]] const std::vector<Entity>& entities() const noexcept { return entities_; }
     [[nodiscard]] std::size_t entity_count() const noexcept { return entities_.size(); }
 
