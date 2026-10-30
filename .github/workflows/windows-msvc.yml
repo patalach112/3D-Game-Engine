@@ -19,6 +19,7 @@ jobs:
           install: >-
             mingw-w64-x86_64-vulkan-headers
             mingw-w64-x86_64-vulkan-loader
+            mingw-w64-x86_64-vulkan-tools
             mingw-w64-x86_64-glslang
             nasm
       - uses: ilammy/msvc-dev-cmd@v1
@@ -94,6 +95,17 @@ jobs:
           $dxil = Get-ChildItem deps/mesa -Recurse -Filter 'dxil.dll' | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
           if (!$dxil) { throw 'Dozen DXIL validator not found' }
           $dxil.DirectoryName >> $env:GITHUB_PATH
+      - name: Verify the CI Vulkan driver before launching GUI programs
+        shell: pwsh
+        run: |
+          vulkaninfo --summary 2>&1 | Tee-Object -FilePath vulkan-environment.log
+          $code = $LASTEXITCODE
+          $details = ((Get-Content vulkan-environment.log | Select-Object -Last 100) -join '%0A')
+          if ($code -ne 0) {
+            Write-Output "::error::$details"
+            exit $code
+          }
+          Write-Output "::notice::$details"
       - name: Launch both real GUI executables and present Vulkan frames
         shell: pwsh
         run: |
