@@ -1,4 +1,5 @@
 #include "editor_app.hpp"
+#include "hud_editor.hpp"
 #include "dock_layout.hpp"
 #include "engine/log.hpp"
 #include <algorithm>
@@ -258,15 +259,11 @@ void console() {
         ImGui::SetKeyboardFocusHere(-1);
     }
 }
-void scene_window() {
-    auto& g=app();
-    g.viewport_bounds={}; g.viewport_visible=false; g.scene_drawlist=nullptr;
-    if (!g.show_scene) return;
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{0,0});
-    if (ImGui::Begin(layout::scene,&g.show_scene,ImGuiWindowFlags_NoBackground
-        |ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse)) {
+void scene_content() {
+        auto& g=app();
         g.scene_floating=!ImGui::IsWindowDocked();
         g.scene_drawlist=ImGui::GetWindowDrawList();
+        if (!g.hud_loaded) {
         const auto origin=ImGui::GetCursorScreenPos();
         const auto available=ImGui::GetContentRegionAvail();
         const float toolbar_height=ImGui::GetFrameHeight()+12;
@@ -277,6 +274,7 @@ void scene_window() {
         ImGui::SameLine(); if (ImGui::RadioButton("Obrót",g.gizmo_mode==1)) set_tool(1);
         ImGui::SameLine(); if (ImGui::RadioButton("Skala",g.gizmo_mode==2)) set_tool(2);
         ImGui::SetCursorScreenPos({origin.x,origin.y+toolbar_height});
+        }
         const auto size=ImGui::GetContentRegionAvail();
         const auto position=ImGui::GetCursorScreenPos();
         g.viewport_bounds={std::clamp(static_cast<LONG>(std::ceil(position.x)),0L,static_cast<LONG>(g.width)),
@@ -285,6 +283,15 @@ void scene_window() {
             std::clamp(static_cast<LONG>(std::floor(position.y+size.y)),0L,static_cast<LONG>(g.height))};
         g.viewport_visible=g.viewport_bounds.right>g.viewport_bounds.left && g.viewport_bounds.bottom>g.viewport_bounds.top;
         if (size.x>0 && size.y>0) ImGui::Dummy(size);
+}
+void scene_window() {
+    auto& g=app();
+    g.viewport_bounds={}; g.viewport_visible=false; g.scene_drawlist=nullptr;
+    if (!g.show_scene) return;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,{0,0});
+    if (ImGui::Begin(layout::scene,&g.show_scene,ImGuiWindowFlags_NoBackground
+        |ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse)) {
+        scene_content();
     }
     ImGui::End(); ImGui::PopStyleVar();
 }
@@ -371,10 +378,12 @@ bool scene_input_at(int x,int y) {
     if (!g.viewport_visible || !PtInRect(&g.viewport_bounds,point)) return false;
     ImGuiWindow* hovered{};
     ImGui::FindHoveredWindowEx({static_cast<float>(x),static_cast<float>(y)},false,&hovered,nullptr);
-    return hovered==ImGui::FindWindowByName(layout::scene);
+    const auto* scene=ImGui::FindWindowByName(g.scene_window_name.empty()?layout::scene:g.scene_window_name.c_str());
+    return hovered && scene && (hovered==scene || hovered->RootWindow==scene);
 }
 void draw_ui() {
     auto& g=app();
+    if (g.hud_loaded) { draw_document_ui(); return; }
     const float width=static_cast<float>(g.width),height=static_cast<float>(g.height);
     title_bar();
     layout::dockspace({0,40},{width,std::max(1.0F,height-40-kFooterHeight)},g.reset_layout);
@@ -401,6 +410,10 @@ void draw_ui() {
         static_cast<double>(ImGui::GetIO().Framerate),g.fps_limit==0?"unlimited":"limit FPS");
     ImGui::End(); ImGui::PopStyleVar();
     g.menu_open=ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel);
+    editor_shortcuts();
+}
+void editor_shortcuts() {
+    auto& g=app();
     // A focused hierarchy is not a textbox. Keep editor shortcuts available
     // there, but never delete/spawn while typing, dragging a field or in a popup.
     const auto popup_flags=ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel;
@@ -427,6 +440,38 @@ void draw_ui() {
                 g.orbit.distance=std::max(2.0F,g.orbit.distance-1.0F);
             if (ImGui::IsKeyPressed(ImGuiKey_Minus) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract))
                 g.orbit.distance=std::min(40.0F,g.orbit.distance+1.0F);
+        }
+    }
+}
+void hud_builtin(const std::string& name) {
+    if(name=="scene") scene_content();
+    else if(name=="hierarchy") hierarchy();
+    else if(name=="inspector") inspector();
+    else if(name=="console") console();
+    else if(name=="resources") resources();
+    else if(name=="notes") notes();
+    else if(name=="renderer") renderer();
+    else if(name=="settings") settings();
+}
+void hud_action(const std::string& name) {
+    auto& g=app();
+    if(name=="scene.save") save_scene();
+    else if(name=="camera.reset") g.orbit={};
+    else if(name=="camera.frame") frame_selected();
+    else if(name=="tool.move") set_tool(0);
+    else if(name=="tool.rotate") set_tool(1);
+    else if(name=="tool.scale") set_tool(2);
+    else if(name=="object.cube") add_primitive(engine::PrimitiveType::Cube);
+    else if(name=="object.sphere") add_primitive(engine::PrimitiveType::Sphere);
+    else if(name=="object.cylinder") add_primitive(engine::PrimitiveType::Cylinder);
+    else if(name=="object.plane") add_primitive(engine::PrimitiveType::Plane);
+    else if(name=="object.circle") add_primitive(engine::PrimitiveType::Circle2D);
+    else if(name=="object.square") add_primitive(engine::PrimitiveType::Square2D);
+    else if(name=="layout.reset") g.hud_reset=true;
+    else if(name=="app.close") PostMessageW(g.hwnd,WM_CLOSE,0,0);
+    else if(name=="settings") {
+        for(const auto& n:g.hud.nodes) if(n.builtin=="settings") {
+            auto* w=g.hud.find(n.parent); if(w) {w->visible=true;g.hud_focus=w->id;}
         }
     }
 }

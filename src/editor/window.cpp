@@ -7,7 +7,7 @@ namespace editor {
 namespace {
 bool over_scene(HWND hwnd,LPARAM lp) {
     POINT p{GET_X_LPARAM(lp),GET_Y_LPARAM(lp)};
-    return app().ready && scene_input_at(p.x,p.y)
+    return app().ready && !app().hud_designer && scene_input_at(p.x,p.y)
         && !ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel)
         && GetActiveWindow()==hwnd;
 }
@@ -163,10 +163,14 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
     case WM_ERASEBKGND: return 1;
     case WM_GETMINMAXINFO: {
         auto* limits=reinterpret_cast<MINMAXINFO*>(lp);
-        limits->ptMinTrackSize.x=900; limits->ptMinTrackSize.y=600; return 0;
+        limits->ptMinTrackSize.x=g.hud_loaded?static_cast<LONG>(g.hud.window_minimum.x):900;
+        limits->ptMinTrackSize.y=g.hud_loaded?static_cast<LONG>(g.hud.window_minimum.y):600; return 0;
     }
     case WM_SIZE: g.minimized=wp==SIZE_MINIMIZED; return 0;
-    case WM_CLOSE: g.close_requested=true; return 0;
+    case WM_CLOSE:
+        if (g.hud_designer && g.hud_dirty) g.hud_confirm_close=true;
+        else g.close_requested=true;
+        return 0;
     case WM_DESTROY: g.close_requested=true; PostQuitMessage(0); return 0;
     case kWorkerWake: return 0;
     case WM_MOUSEMOVE: kind=engine::InputKind::PointerMove; break;

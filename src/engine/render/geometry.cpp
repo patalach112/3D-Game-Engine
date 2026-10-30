@@ -1,6 +1,7 @@
 // Projection, grid, selection outlines and mode-specific gizmo geometry.
 #include "engine/render/internal_types.hpp"
 #include "engine/gizmo.hpp"
+#include "engine/render/grid.hpp"
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
@@ -107,14 +108,7 @@ FrameGeometry scene_geometry(const Scene& scene, const EditorCamera& camera, Ent
             gx0=std::min(gx0,hit.x); gx1=std::max(gx1,hit.x);
             gz0=std::min(gz0,hit.z); gz1=std::max(gz1,hit.z);
         }
-        const float range=std::max(gx1-gx0,gz1-gz0);
-        // Nice-steps: wybierz krok z serii 1-2-5-10-20-50... aby linie miały rozmiar ~1/10 range.
-        const float raw_step=range/12.0F;
-        float magnitude=1.0F;
-        while (magnitude*2.0F<=raw_step) magnitude*=2.0F;
-        float step=magnitude;
-        while (step*5.0F<=raw_step) step*=5.0F;
-        step=std::max(step,1.0F);
+        const float step=grid_spacing(camera);
         // Bounded iteration also protects against hostile/very large scene coordinates.
         for (int axis=0;axis<2;++axis) {
             const float start=std::floor((axis?gz0:gx0)/step)*step;
