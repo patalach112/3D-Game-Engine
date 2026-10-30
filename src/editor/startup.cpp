@@ -42,6 +42,7 @@ void configure_startup_diagnostics(bool designer) {
     FILE* sink{};
 #ifdef _MSC_VER
     (void)freopen_s(&sink,crash_file,"a",stderr);
+    _set_abort_behavior(0,_WRITE_ABORT_MSG|_CALL_REPORTFAULT);
 #ifdef _DEBUG
     _CrtSetReportHook2(_CRT_RPTHOOK_INSTALL,report_hook);
     _CrtSetReportMode(_CRT_ASSERT,_CRTDBG_MODE_FILE);

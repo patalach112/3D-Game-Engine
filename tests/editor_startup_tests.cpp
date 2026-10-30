@@ -31,7 +31,11 @@ int main(int argc,char** argv) {
         STARTUPINFOW si{};si.cb=sizeof(si);si.dwFlags=STARTF_USESHOWWINDOW;si.wShowWindow=SW_HIDE;PROCESS_INFORMATION process{};
         assert(CreateProcessW(nullptr,command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,dir.c_str(),&si,&process));
         const DWORD waited=WaitForSingleObject(process.hProcess,10000);
-        if(waited!=WAIT_OBJECT_0)TerminateProcess(process.hProcess,1);
+        if(waited!=WAIT_OBJECT_0) {
+            TerminateProcess(process.hProcess,1);WaitForSingleObject(process.hProcess,5000);
+            std::wcerr<<L"Timed out child: "<<argument<<L"\n";
+            std::ifstream diagnostic(dir/"engine_editor.crash.log");std::cerr<<diagnostic.rdbuf();
+        }
         assert(waited==WAIT_OBJECT_0);DWORD code{};assert(GetExitCodeProcess(process.hProcess,&code));
         CloseHandle(process.hThread);CloseHandle(process.hProcess);assert(code==expected);
     };
