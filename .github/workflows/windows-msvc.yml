@@ -62,8 +62,30 @@ jobs:
         shell: pwsh
         run: |
           foreach ($config in 'Release', 'Debug') {
-            ctest --test-dir build-msvc -C $config -R '^(platform_tests|geometry_tests|geometry_cache_tests|bindings_tests|hud_tests|editor_state_tests|input_tests|render_worker_tests|camera_smoothing_tests|log_tests|docking_tests)$' --output-on-failure --no-tests=error
+            ctest --test-dir build-msvc -C $config -R '^(platform_tests|geometry_tests|geometry_cache_tests|bindings_tests|hud_tests|editor_startup_tests|editor_state_tests|input_tests|render_worker_tests|camera_smoothing_tests|log_tests|docking_tests)$' --output-on-failure --no-tests=error
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+      - name: Install software Vulkan ICD for real Windows startup tests
+        shell: pwsh
+        run: |
+          Invoke-WebRequest 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.5/mesa3d-26.2.5-release-msvc.7z' -OutFile mesa.7z
+          & 7z x mesa.7z '-odeps/mesa' -y | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $icd = Get-ChildItem deps/mesa -Recurse -Filter '*lvp*.json' | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+          if (!$icd) { throw 'Lavapipe x64 ICD not found' }
+          "VK_ICD_FILENAMES=$($icd.FullName)" >> $env:GITHUB_ENV
+          $icd.DirectoryName >> $env:GITHUB_PATH
+      - name: Launch both real GUI executables and present Vulkan frames
+        shell: pwsh
+        run: |
+          foreach ($config in 'Release', 'Debug') {
+            & ./cmake/windows_editor_smoke.ps1 -BinaryDirectory "build-msvc/$config"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-startup-diagnostics
+          path: build-msvc/*/startup-smoke-logs/*.log
       - name: Package Release
         run: cmake --build build-msvc --config Release --target package

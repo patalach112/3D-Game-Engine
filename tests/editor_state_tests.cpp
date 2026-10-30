@@ -229,6 +229,17 @@ int main() {
     hud_io.AddKeyEvent(ImGuiKey_E,false);hud_frame();
     hud_io.AddKeyEvent(ImGuiMod_Ctrl,true);hud_io.AddKeyEvent(ImGuiKey_T,true);hud_frame();assert(g.gizmo_mode==1);
     hud_io.AddKeyEvent(ImGuiMod_Ctrl,false);hud_io.AddKeyEvent(ImGuiKey_T,false);hud_frame();
+    // Cold runtime startup must not dispatch launcher's held keys. The designer
+    // never enters this dispatch path, which hid this gap in previous tests.
+    g.gizmo_mode=0;g.bindings_armed=false;g.live_bindings={{"tool.rotate",'T',0}};
+    hud_io.AddKeyEvent(ImGuiKey_T,true);hud_frame();assert(g.gizmo_mode==0 && !g.bindings_armed);
+    hud_io.AddKeyEvent(ImGuiKey_T,false);hud_frame();assert(g.gizmo_mode==0 && g.bindings_armed);
+    hud_io.AddKeyEvent(ImGuiKey_T,true);hud_frame();assert(g.gizmo_mode==1);
+    hud_io.AddKeyEvent(ImGuiKey_T,false);hud_frame();
+    g.live_bindings={{"grid.toggle",static_cast<int>(engine::hud::Key::MouseLeft),0}};
+    const bool grid=g.grid_visible;
+    hud_io.AddMousePosEvent(-FLT_MAX,-FLT_MAX);hud_io.AddMouseButtonEvent(0,true);hud_frame();assert(g.grid_visible==grid);
+    hud_io.AddMouseButtonEvent(0,false);hud_frame();
     ImGui::DestroyContext();g.hud_loaded=false;g.hud_designer=false;
     std::cout << "Editor state, flat picking, docked UI and console passed (no GPU)\n";
 }

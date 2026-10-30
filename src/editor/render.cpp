@@ -1,5 +1,6 @@
 #include "editor_app.hpp"
 #include "dock_layout.hpp"
+#include "engine/log.hpp"
 #include <algorithm>
 #include <chrono>
 
@@ -18,9 +19,12 @@ void render_frame(HWND hwnd) {
         std::chrono::duration<float>(now-previous_frame).count();
     const float delta=elapsed>0?elapsed:1.0F/60.0F;
     previous_frame=now;
+    const bool first=g.submitted_frames==0;
+    if(first)LOG_INFO("startup","First frame: building UI");
     g.renderer.begin_ui_frame(delta);
     draw_ui();
     const auto view=view_rect();
+    if(first)LOG_INFO("startup","First UI built: scene_visible=%d viewport=%ld,%ld..%ld,%ld",g.viewport_visible,view.left,view.top,view.right,view.bottom);
     const auto& io=ImGui::GetIO();
     const bool focused=GetForegroundWindow()==hwnd && !io.AppFocusLost;
     const bool blocked=g.hud_designer || g.show_settings || g.binding_pointer_frame==ImGui::GetFrameCount() || !g.viewport_visible || ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel);
@@ -55,7 +59,8 @@ void render_frame(HWND hwnd) {
     const bool visible=g.viewport_visible;
     const engine::RenderViewport viewport{static_cast<int>(view.left),static_cast<int>(view.top),
         static_cast<int>(view.right-view.left),static_cast<int>(view.bottom-view.top)};
-    g.render_worker->submit([&g,camera,selected,viewport,visible] {
+    g.render_worker->submit([&g,camera,selected,viewport,visible,first] {
+        if(first)LOG_INFO("startup","First GPU render: begin");
         if (visible) g.renderer.render(g.scene,camera,selected,viewport);
         else {
             // A closed/collapsed/inactive scene tab must not render full-screen
@@ -63,7 +68,10 @@ void render_frame(HWND hwnd) {
             const engine::Scene empty;
             g.renderer.render(empty,camera,0,{0,0,1,1});
         }
+        if(first)LOG_INFO("startup","First GPU render: recorded; presenting");
         g.renderer.present();
+        if(first)LOG_INFO("startup","First render/present returned successfully");
     });
+    ++g.submitted_frames;
 }
 } // namespace editor

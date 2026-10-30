@@ -43,7 +43,7 @@ void apply_input_event(HWND hwnd,const engine::InputEvent& event) {
     else if (message==WM_KILLFOCUS || message==WM_CAPTURECHANGED) {
         g.orbit_input.rightDown=false; g.orbit_input.rightPressed=false;
     }
-    if (message==WM_KILLFOCUS) g.orbit_input.focused=false;
+    if (message==WM_KILLFOCUS) {g.orbit_input.focused=false;g.bindings_armed=false;}
     else if (message==WM_SETFOCUS) g.orbit_input.focused=true;
     if (event.kind==engine::InputKind::PointerMove || event.kind==engine::InputKind::PointerButton
         || event.kind==engine::InputKind::Wheel || event.kind==engine::InputKind::Focus)
@@ -168,6 +168,7 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
     }
     case WM_SIZE: g.minimized=wp==SIZE_MINIMIZED; return 0;
     case WM_CLOSE:
+        LOG_INFO("startup","WM_CLOSE received (designer=%d dirty=%d)",g.hud_designer,g.hud_dirty);
         if (g.hud_designer && g.hud_dirty) g.hud_confirm_close=true;
         else g.close_requested=true;
         return 0;
