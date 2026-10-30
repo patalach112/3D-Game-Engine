@@ -5,18 +5,25 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <io.h>
 #ifdef _MSC_VER
 #include <crtdbg.h>
 #endif
 namespace editor {
 namespace {
 const char* crash_file="engine_editor.crash.log";
+// A process-lifetime duplicate of stderr's OS handle avoids reopening a file
+// whose CRT sharing mode may deny the fatal writer (notably MSVC).
+HANDLE crash_sink=INVALID_HANDLE_VALUE;
 void write_crash(const char* message) noexcept {
-    // Do not acquire the engine logger mutex from a fatal exception handler.
-    const auto file=CreateFileA(crash_file,FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+    // No engine/CRT logger locks, allocation or stdio in a fatal handler.
+    const bool temporary=crash_sink==INVALID_HANDLE_VALUE;
+    const auto file=temporary?CreateFileA(crash_file,FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr):crash_sink;
     if(file==INVALID_HANDLE_VALUE)return;
-    DWORD written{};DWORD length{};while(message[length]&&length<4096)++length;
-    WriteFile(file,message,length,&written,nullptr);FlushFileBuffers(file);CloseHandle(file);
+    DWORD written{};DWORD length{};while(length<4096 && message[length])++length;
+    OVERLAPPED append{};append.Offset=MAXDWORD;append.OffsetHigh=MAXDWORD;
+    WriteFile(file,message,length,&written,&append);FlushFileBuffers(file);
+    if(temporary)CloseHandle(file);
 }
 LONG WINAPI fatal_exception(EXCEPTION_POINTERS* info) {
     char text[256]{};
@@ -43,7 +50,14 @@ void configure_startup_diagnostics(bool designer) {
 #else
     sink=std::freopen(crash_file,"a",stderr);
 #endif
-    (void)sink;
+    if(sink) {
+        const int descriptor=_fileno(sink);
+        if(descriptor>=0) {
+            const auto native=_get_osfhandle(descriptor);
+            if(native!=-1 && native!=-2)
+                DuplicateHandle(GetCurrentProcess(),reinterpret_cast<HANDLE>(native),GetCurrentProcess(),&crash_sink,0,FALSE,DUPLICATE_SAME_ACCESS);
+        }
+    }
     SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX);
     SetUnhandledExceptionFilter(fatal_exception);
     std::signal(SIGABRT,abort_signal);

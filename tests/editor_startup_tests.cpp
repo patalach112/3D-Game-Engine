@@ -21,6 +21,7 @@ int main(int argc,char**) {
     wchar_t module[32768]{};const auto count=GetModuleFileNameW(nullptr,module,32768);assert(count && count<32768);
     const auto dir=std::filesystem::temp_directory_path()/("engine_startup_"+std::to_string(GetCurrentProcessId()));
     std::filesystem::create_directories(dir);
+    { std::ofstream previous(dir/"engine_editor.crash.log");previous<<"Previous crash record\n"; }
     std::wstring command=L"\""+std::wstring(module,count)+L"\" --crash-child";
     STARTUPINFOW si{};si.cb=sizeof(si);si.dwFlags=STARTF_USESHOWWINDOW;si.wShowWindow=SW_HIDE;PROCESS_INFORMATION process{};
     assert(CreateProcessW(nullptr,command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,dir.c_str(),&si,&process));
@@ -29,6 +30,7 @@ int main(int argc,char**) {
     assert(waited==WAIT_OBJECT_0);DWORD code{};assert(GetExitCodeProcess(process.hProcess,&code));
     CloseHandle(process.hThread);CloseHandle(process.hProcess);assert(code==EXCEPTION_ACCESS_VIOLATION);
     std::ifstream crash(dir/"engine_editor.crash.log");const std::string text((std::istreambuf_iterator<char>(crash)),{});
+    assert(text.find("Previous crash record")!=std::string::npos);
     assert(text.find("0xC0000005")!=std::string::npos);crash.close();std::filesystem::remove_all(dir);
     std::cout<<"Hidden-launch visibility and fatal exception logging passed\n";
 }
