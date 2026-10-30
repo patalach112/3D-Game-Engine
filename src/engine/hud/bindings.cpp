@@ -15,7 +15,7 @@
 namespace engine::hud {
 namespace {
 constexpr Action registry[]{
-    {"","Brak funkcji"},{"scene.save","Zapisz scenę"},{"model.import","Importuj model OBJ"},{"settings","Ustawienia"},{"settings.bindings","Ustawienia: bindy"},{"settings.graphics","Ustawienia: grafika"},
+    {"","Brak funkcji"},{"scene.save","Zapisz scenę"},{"model.import","Importuj model 3D"},{"settings","Ustawienia"},{"settings.bindings","Ustawienia: bindy"},{"settings.graphics","Ustawienia: grafika"},
     {"tool.move","Przesuwanie"},{"tool.rotate","Obracanie"},{"tool.scale","Skalowanie"},
     {"camera.reset","Reset kamery"},{"camera.frame","Wycentruj zaznaczony"},
     {"camera.front","Kamera: przód"},{"camera.top","Kamera: góra"},{"camera.side","Kamera: bok"},{"camera.iso","Kamera: izometryczna"},

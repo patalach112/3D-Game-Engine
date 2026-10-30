@@ -32,6 +32,7 @@ struct MeshAsset {
     std::vector<std::array<int,3>> triangles;
     std::vector<std::array<int,2>> edges;
     std::string source;
+    Vec3 suggested_color{0.72F,0.72F,0.74F};
 };
 
 struct Transform {
