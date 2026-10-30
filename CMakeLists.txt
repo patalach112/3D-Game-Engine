@@ -83,6 +83,8 @@ add_library(engine_core SHARED
     ${ENGINE_PLATFORM_SOURCE}
     src/engine/scene.cpp
     src/engine/software_renderer.cpp
+    src/engine/render/mesh_builder.cpp
+    src/engine/render/geometry.cpp
     src/engine/log.cpp
     src/engine/ui/third_party/imgui/imgui.cpp
     src/engine/ui/third_party/imgui/imgui_draw.cpp
