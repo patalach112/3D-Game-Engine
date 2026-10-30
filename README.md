@@ -71,9 +71,9 @@ Panele można dokować, odpinać, skalować i łączyć w zakładki wewnątrz g�
 okna; projektant `editor_hud.exe` zapisuje pełny HUD w `editor_hud.layout` obok EXE,
 a `engine_editor.exe` wczytuje go przy starcie. Konsola na dole ma poziomy
 DEBUG/INFO/WARN/ERROR, filtr, kopiowanie, czyszczenie i komendy (`help`).
-Menu **Plik** zawiera nieaktywne Import/Eksport oraz Ustawienia, **Narzędzia**
+Menu **Plik** zawiera import modeli Wavefront OBJ, nieaktywny Eksport oraz Ustawienia, **Narzędzia**
 przełącza ruch/obrót/skalę gizma, a **Dodaj** ma podmenu otwierane po najechaniu:
-**Obiekty** (cztery dotychczasowe typy) oraz **Płaszczyzna** (koło 2D i kwadrat 2D).
+**Obiekty 3D** (kostka, kula, walec, stożek, piramida i płaszczyzna) oraz **Płaszczyzna** (koło 2D i kwadrat 2D).
 Szczegóły i lista testów: [docs/editor_ui.md](docs/editor_ui.md).
 
 ## Budowanie
@@ -169,8 +169,9 @@ Komendy terminala: `add`, `select ID`, `move X Y Z`, `delete`, `save`, `render`,
 
 ## Funkcje
 
-- Kostki, kule, walce i płaszczyzny; mesh każdego typu jest generowany i buforowany.
-- Pozycja, obrót Euler XYZ i skala, również ujemna.
+- Kostki, kule, walce, stożki, piramidy i płaszczyzny; mesh każdego typu jest generowany i buforowany.
+- Import modeli Wavefront OBJ z triangulacją wielokątów, normalizacją rozmiaru i limitami bezpieczeństwa.
+- Pozycja, obrót Euler XYZ i skala, również ujemna; indywidualny kolor materiału w inspektorze.
 - Perspektywa z płaszczyzną near 0.08 i far 100000; clipping wykonuje Vulkan.
 - Dwustronne ściany, także gdy kamera znajduje się wewnątrz bryły.
 - Proste płaskie cieniowanie kierunkowe, kolory brył, krawędzie zaznaczenia.
@@ -178,7 +179,7 @@ Komendy terminala: `add`, `select ID`, `move X Y Z`, `delete`, `save`, `render`,
 - Gizmo osi X/Y/Z jako nakładka Vulkan, ze stałym ekranowym rozmiarem końcówek.
 - Windows: hierarchia, inspektor, przeciągane separatory paneli, Unicode/Segoe UI,
   obracanie kamery PPM, zoom kółkiem, zaznaczanie i przeciąganie obiektów.
-- Zapis sceny do `scene.txt` (v4: nazwy UTF-8 w cudzysłowach, w tym spacje).
+- Zapis sceny do `scene.txt` (v5: transformacja, kolor i źródło importowanego OBJ).
 - GPU UI: wyszukiwanie hierarchii, lista ze scrollem, edycja nazw i transformacji,
   rozwijane sekcje inspektora, przyciski oraz karty zasobów/notatek/diagnostyki.
 - Karta ustawień grafiki: limit 15–360 FPS lub `Unlimited`, widoczność siatki,

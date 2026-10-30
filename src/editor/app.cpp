@@ -105,6 +105,8 @@ void duplicate_entity() {
     const auto original = *source;
     auto& copy = g.scene.create_entity(original.name + " copy", original.primitive);
     copy.transform = original.transform;
+    copy.color = original.color;
+    copy.mesh = original.mesh;
     // Rzucamy kopię o 2 jednostki w kierunku X, aby była widoczna.
     copy.transform.position.x += 2.0F;
     g.selected = copy.id;

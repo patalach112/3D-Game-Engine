@@ -39,11 +39,7 @@ inline CameraPoint to_camera(Vec3 world, const EditorCamera& camera, const Basis
     return {dot(delta, basis.right), dot(delta, basis.up), dot(delta, basis.forward)};
 }
 
-struct MeshData {
-    std::vector<Vec3> vertices;
-    std::vector<std::array<int, 3>> triangles;
-    std::vector<std::array<int, 2>> edges;
-};
+using MeshData = MeshAsset;
 
 struct DebugVertex {
     Vec3 position;
@@ -74,7 +70,7 @@ struct FrameGeometry {
 
 // Cache renderer inputs, not Scene identity: transforms can be edited through
 // public Entity references. A scene revision counter alone would miss edits.
-struct GeometryEntityKey { EntityId id; PrimitiveType primitive; Transform transform; };
+struct GeometryEntityKey { EntityId id; PrimitiveType primitive; Transform transform; Vec3 color; const MeshAsset* mesh{}; };
 struct FrameGeometryCache {
     std::vector<GeometryEntityKey> entities;
     EditorCamera camera;

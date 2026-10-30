@@ -94,6 +94,7 @@ add_library(engine_core SHARED
     src/engine/platform.cpp
     ${ENGINE_PLATFORM_SOURCE}
     src/engine/scene.cpp
+    src/engine/obj_loader.cpp
     src/engine/software_renderer.cpp
     src/engine/render/mesh_builder.cpp
     src/engine/render/geometry.cpp
@@ -155,7 +156,7 @@ if(WIN32)
         src/editor/scene_io.cpp src/editor/interaction.cpp src/editor/gizmo.cpp
         src/editor/window.cpp src/editor/hud_editor.cpp src/editor/settings.cpp src/editor/startup.cpp)
     add_library(editor_frontend STATIC ${EDITOR_FRONTEND_SOURCES})
-    target_link_libraries(editor_frontend PUBLIC engine_core user32)
+    target_link_libraries(editor_frontend PUBLIC engine_core user32 comdlg32)
     target_compile_definitions(editor_frontend PUBLIC UNICODE _UNICODE)
     foreach(APP IN ITEMS engine_editor editor_hud)
         add_executable(${APP} WIN32 src/editor/main.cpp)
@@ -203,7 +204,7 @@ if(BUILD_TESTING)
         target_compile_options(ui_tests PRIVATE -UNDEBUG)
     endif()
     add_test(NAME ui_tests COMMAND ui_tests)
-    foreach(TEST IN ITEMS bindings_tests geometry_cache_tests hud_tests geometry_tests geometry_gpu_tests input_tests render_worker_tests
+    foreach(TEST IN ITEMS bindings_tests geometry_cache_tests hud_tests obj_loader_tests geometry_tests geometry_gpu_tests input_tests render_worker_tests
             camera_smoothing_tests render_worker_gpu_tests log_tests docking_tests primitives_gpu_tests)
         add_executable(${TEST} tests/${TEST}.cpp)
         target_link_libraries(${TEST} PRIVATE engine_core)

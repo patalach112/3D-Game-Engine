@@ -25,7 +25,12 @@ int main() {
     (void)cache.update(scene,camera,0,900,600,false,1);assert(cache.builds==11);
     const auto extra=scene.create_entity("Sphere",engine::PrimitiveType::Sphere).id;update();assert(cache.builds==12);
     assert(scene.remove_entity(extra));update();assert(cache.builds==13);
-    scene.find_entity(id)->primitive=engine::PrimitiveType::Circle2D;update();assert(cache.builds==14);
+    scene.find_entity(id)->color={1,.2F,.1F};update();assert(cache.builds==14);
+    assert(cache.frame.geometry.tints.front().x==1 && cache.frame.geometry.tints.front().y==.2F);
+    scene.find_entity(id)->primitive=engine::PrimitiveType::Circle2D;update();assert(cache.builds==15);
+    auto imported=std::make_shared<engine::MeshAsset>();
+    imported->vertices={{-1,0,0},{1,0,0},{0,1,0}};imported->triangles={{{0,1,2}}};imported->edges={{{0,1}},{{1,2}},{{2,0}}};
+    scene.find_entity(id)->mesh=imported;update();assert(cache.builds==16);
     cache.frame.geometry.validate();
     std::cout<<"Geometry cache invalidation passed (no GPU)\n";
 }

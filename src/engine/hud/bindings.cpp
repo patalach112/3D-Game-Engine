@@ -15,7 +15,7 @@
 namespace engine::hud {
 namespace {
 constexpr Action registry[]{
-    {"","Brak funkcji"},{"scene.save","Zapisz scenę"},{"settings","Ustawienia"},{"settings.bindings","Ustawienia: bindy"},{"settings.graphics","Ustawienia: grafika"},
+    {"","Brak funkcji"},{"scene.save","Zapisz scenę"},{"model.import","Importuj model OBJ"},{"settings","Ustawienia"},{"settings.bindings","Ustawienia: bindy"},{"settings.graphics","Ustawienia: grafika"},
     {"tool.move","Przesuwanie"},{"tool.rotate","Obracanie"},{"tool.scale","Skalowanie"},
     {"camera.reset","Reset kamery"},{"camera.frame","Wycentruj zaznaczony"},
     {"camera.front","Kamera: przód"},{"camera.top","Kamera: góra"},{"camera.side","Kamera: bok"},{"camera.iso","Kamera: izometryczna"},
@@ -24,7 +24,7 @@ constexpr Action registry[]{
     {"entity.left","Przesuń w lewo"},{"entity.right","Przesuń w prawo"},{"entity.up","Przesuń w górę"},{"entity.down","Przesuń w dół"},
     {"grid.toggle","Pokaż / ukryj siatkę"},{"console.toggle","Pokaż / ukryj konsolę"},
     {"object.cube","Dodaj kostkę"},{"object.sphere","Dodaj kulę"},{"object.cylinder","Dodaj walec"},
-    {"object.plane","Dodaj płaszczyznę 3D"},{"object.circle","Dodaj koło 2D"},{"object.square","Dodaj kwadrat 2D"},
+    {"object.cone","Dodaj stożek"},{"object.pyramid","Dodaj piramidę"},{"object.plane","Dodaj płaszczyznę 3D"},{"object.circle","Dodaj koło 2D"},{"object.square","Dodaj kwadrat 2D"},
     {"layout.reset","Przywróć układ"},{"app.close","Zamknij aplikację"}
 };
 constexpr const char* special[]{"Tab","Left","Right","Up","Down","PageUp","PageDown","Home","End","Insert","Delete","Backspace","Space","Enter","Escape",
@@ -51,7 +51,7 @@ std::string binding_label(const Binding& b) {
 }
 std::vector<Binding> basic_bindings() {
     using K=Key;
-    return {{"scene.save",'S',Ctrl},{"entity.duplicate",'D',Ctrl},{"camera.frame",'F',0},
+    return {{"scene.save",'S',Ctrl},{"model.import",'I',Ctrl},{"entity.duplicate",'D',Ctrl},{"camera.frame",'F',0},
         {"tool.move",'Q',0},{"tool.rotate",'W',0},{"tool.scale",'E',0},{"object.cube",'N',0},
         {"entity.delete",static_cast<int>(K::Delete),0},{"entity.left",static_cast<int>(K::Left),0},
         {"entity.right",static_cast<int>(K::Right),0},{"entity.up",static_cast<int>(K::Up),0},{"entity.down",static_cast<int>(K::Down),0},

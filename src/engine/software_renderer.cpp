@@ -1049,6 +1049,17 @@ void VulkanRenderer::enable_ui(float font_size) {
         style.Colors[ImGuiCol_CheckMark]={0.31F,0.85F,0.79F,1};
         style.Colors[ImGuiCol_SliderGrab]={0.31F,0.85F,0.79F,1};
         style.Colors[ImGuiCol_TextSelectedBg]={0.15F,0.50F,0.58F,0.6F};
+        // Neutral, high-contrast editor chrome inspired by established DCC tools;
+        // docking/layout stay unchanged while active tabs and separators read better.
+        style.Colors[ImGuiCol_Border]={0.22F,0.24F,0.28F,1};
+        style.Colors[ImGuiCol_Separator]={0.22F,0.24F,0.28F,1};
+        style.Colors[ImGuiCol_Tab]={0.09F,0.10F,0.12F,1};
+        style.Colors[ImGuiCol_TabHovered]={0.18F,0.29F,0.34F,1};
+        style.Colors[ImGuiCol_TabSelected]={0.15F,0.17F,0.20F,1};
+        style.Colors[ImGuiCol_TabSelectedOverline]={0.31F,0.85F,0.79F,1};
+        style.Colors[ImGuiCol_TitleBg]={0.075F,0.082F,0.10F,1};
+        style.Colors[ImGuiCol_TitleBgActive]={0.10F,0.115F,0.14F,1};
+        style.Colors[ImGuiCol_DockingPreview]={0.31F,0.85F,0.79F,0.55F};
         ImGui_ImplVulkan_InitInfo info{};
         info.ApiVersion=VK_API_VERSION_1_1; info.Instance=impl_->instance;
         info.PhysicalDevice=impl_->physical; info.Device=impl_->device;

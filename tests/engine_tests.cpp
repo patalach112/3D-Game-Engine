@@ -97,7 +97,8 @@ int main() {
     renderer.render(empty_scene, camera, 0);
     const auto grid_only = renderer.pixels();
     for (auto type : {engine::PrimitiveType::Cube, engine::PrimitiveType::Sphere,
-                      engine::PrimitiveType::Cylinder, engine::PrimitiveType::Plane}) {
+                      engine::PrimitiveType::Cylinder, engine::PrimitiveType::Cone,
+                      engine::PrimitiveType::Pyramid, engine::PrimitiveType::Plane}) {
         engine::Scene single;
         auto& object = single.create_entity("Primitive", type);
         object.transform.position = {0, 0.5F, 0};

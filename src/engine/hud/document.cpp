@@ -110,13 +110,14 @@ Document defaults() {
     const auto list=[&](Id p,const char* text){return d.add(Kind::List,p,text);};
     const auto button=[&](Id p,const char* text,const char* action){const auto id=d.add(Kind::Button,p,text);d.find(id)->action=action;return id;};
     auto f=list(bar,"Plik");
-    d.find(button(f,"Import",""))->enabled=false; d.find(button(f,"Eksport",""))->enabled=false;
+    button(f,"Importuj OBJ","model.import"); d.find(button(f,"Eksport",""))->enabled=false;
     button(f,"Zapisz scenę","scene.save"); button(f,"Ustawienia","settings"); button(f,"Zamknij","app.close");
     auto t=list(bar,"Narzędzia");
     button(t,"Przesuwanie","tool.move");button(t,"Obracanie","tool.rotate");button(t,"Skalowanie","tool.scale");
     button(t,"Reset kamery","camera.reset");button(t,"Wycentruj zaznaczony","camera.frame");
     auto add=list(bar,"Dodaj"),o=list(add,"Obiekty"),p=list(add,"Płaszczyzna");
-    button(o,"Kostka","object.cube");button(o,"Kula","object.sphere");button(o,"Walec","object.cylinder");button(o,"Płaszczyzna 3D","object.plane");
+    button(o,"Kostka","object.cube");button(o,"Kula","object.sphere");button(o,"Walec","object.cylinder");
+    button(o,"Stożek","object.cone");button(o,"Piramida","object.pyramid");button(o,"Płaszczyzna 3D","object.plane");
     button(p,"Koło 2D","object.circle");button(p,"Kwadrat 2D","object.square");
     auto v=list(bar,"Widok");d.find(v)->builtin="view.windows";button(v,"Przywróć układ","layout.reset");
     const auto window=[&](const char* name,const char* content,Dock dock,Rect rect,bool visible=true) {
@@ -172,6 +173,13 @@ bool load(const std::filesystem::path& path,Document& out,std::string& error) {
             if(!children(id))d.erase(id);
             if(parent&&!children(parent))d.erase(parent);
         }
+        // Upgrade the old disabled placeholder without altering custom import actions.
+        for(auto& n:d.nodes)if(n.kind==Kind::Button&&n.text=="Import"&&n.action.empty()&&!n.enabled) {
+            n.text="Importuj OBJ";n.action="model.import";n.enabled=true;
+        }
+        const bool has_import=std::any_of(d.bindings.begin(),d.bindings.end(),[](const Binding& b){return b.action=="model.import";});
+        const bool ctrl_i_used=std::any_of(d.bindings.begin(),d.bindings.end(),[](const Binding& b){return b.key=='I'&&b.modifiers==Ctrl;});
+        if(!has_import&&!ctrl_i_used&&d.bindings.size()<512)d.bindings.push_back({"model.import",'I',Ctrl});
         f>>std::ws;if(!f.eof()) {error="Dodatkowe dane po dokumencie";return false;}
         if(!d.validate(error)) return false;
         out=std::move(d);return true;
