@@ -1,0 +1,69 @@
+name: Windows MSVC build
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  msvc:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Packaged Vulkan C headers/loader and shader tools only. Every engine,
+      # editor and test C++ source below is compiled by MSVC, not MinGW.
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-vulkan-headers
+            mingw-w64-x86_64-vulkan-loader
+            mingw-w64-x86_64-glslang
+            nasm
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Prepare MSVC import library for the Vulkan C ABI
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force deps/include | Out-Null
+          # Do not put the whole MinGW include tree on MSVC's search path.
+          Copy-Item -Recurse "${{ steps.msys2.outputs.msys2-location }}/mingw64/include/vulkan" deps/include/
+          Copy-Item -Recurse "${{ steps.msys2.outputs.msys2-location }}/mingw64/include/vk_video" deps/include/
+          git clone --depth 1 --branch v1.3.290 https://github.com/KhronosGroup/Vulkan-Loader deps/vulkan-loader
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          lib.exe /nologo /machine:x64 /def:deps/vulkan-loader/loader/vulkan-1.def /out:deps/vulkan-1.lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          '${{ steps.msys2.outputs.msys2-location }}/mingw64/bin' >> $env:GITHUB_PATH
+      - name: Configure Visual Studio x64
+        shell: pwsh
+        run: |
+          cmake -S . -B build-msvc -A x64 -DBUILD_TESTING=ON -DENGINE_USE_ASM=ON -DCMAKE_COMPILE_WARNING_AS_ERROR=ON "-DCMAKE_ASM_NASM_COMPILER=${{ steps.msys2.outputs.msys2-location }}/usr/bin/nasm.exe" -DVulkan_INCLUDE_DIR=${{ github.workspace }}/deps/include -DVulkan_LIBRARY=${{ github.workspace }}/deps/vulkan-1.lib 2>&1 | Tee-Object -FilePath configure.log
+          if ($LASTEXITCODE -ne 0) {
+            $code = $LASTEXITCODE
+            $details = ((Get-Content configure.log | Select-Object -Last 100) -join '%0A')
+            Write-Output "::error::$details"
+            exit $code
+          }
+      - name: Build Release and Debug (C++ flags must not reach NASM)
+        run: |
+          foreach ($config in 'Release', 'Debug') {
+            cmake --build build-msvc --config $config --parallel 2 2>&1 | Tee-Object -FilePath "msvc-$config.log"
+            if ($LASTEXITCODE -ne 0) {
+              $code = $LASTEXITCODE
+              Get-Content "msvc-$config.log" | Select-String 'error|warning C' | Select-Object -First 25 | ForEach-Object {
+                Write-Output "::error::$($_.Line)"
+              }
+              exit $code
+            }
+          }
+      - name: Test without a Vulkan GPU
+        shell: pwsh
+        run: |
+          foreach ($config in 'Release', 'Debug') {
+            ctest --test-dir build-msvc -C $config -R '^(platform_tests|geometry_tests|editor_state_tests|input_tests|render_worker_tests|camera_smoothing_tests|log_tests|docking_tests)$' --output-on-failure --no-tests=error
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Package Release
+        run: cmake --build build-msvc --config Release --target package

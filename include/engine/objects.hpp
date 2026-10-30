@@ -59,15 +59,15 @@ struct GeometryBuffer {
     ENGINE_API void validate() const;
 };
 using MeshId=std::uint32_t;
-class ENGINE_API GeometryBuilder {
+class GeometryBuilder {
 public:
-    void add_hud(std::span<const Vertex_hud> vertices,std::span<const std::uint32_t> indices);
+    ENGINE_API void add_hud(std::span<const Vertex_hud> vertices,std::span<const std::uint32_t> indices);
     // For the font backend: keep per-list indices local; baseVertex is supplied per draw.
-    void append_ui(std::span<const Vertex_hud> vertices,std::span<const std::uint32_t> indices);
-    MeshId add_mesh(std::span<const Vertex> vertices,std::span<const std::uint32_t> indices);
-    std::uint32_t add_object(MeshId mesh,ObjectData data,Vec4 tint={0.65F,0.65F,0.67F,1});
-    [[nodiscard]] GeometryBuffer build() const;
-    static GeometryBuilder from_buffer(const GeometryBuffer& buffer);
+    ENGINE_API void append_ui(std::span<const Vertex_hud> vertices,std::span<const std::uint32_t> indices);
+    ENGINE_API MeshId add_mesh(std::span<const Vertex> vertices,std::span<const std::uint32_t> indices);
+    ENGINE_API std::uint32_t add_object(MeshId mesh,ObjectData data,Vec4 tint={0.65F,0.65F,0.67F,1});
+    [[nodiscard]] ENGINE_API GeometryBuffer build() const;
+    static ENGINE_API GeometryBuilder from_buffer(const GeometryBuffer& buffer);
 private:
     struct Mesh { std::uint32_t firstIndex{}, count{}; std::int32_t baseVertex{}; float radius{}; };
     std::vector<Vertex_hud> hud_;
