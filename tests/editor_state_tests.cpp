@@ -114,7 +114,8 @@ int main() {
     editor::duplicate_entity(); editor::frame_selected();
     assert(g.scene.entity_count() == 301 && g.selected == 999999);
     // Actual flat primitive picking, including rotated/non-uniformly scaled shapes.
-    engine::Entity flat{1,"flat",engine::PrimitiveType::Circle2D,{}};
+    engine::Entity flat;
+    flat.id=1;flat.name="flat";flat.primitive=engine::PrimitiveType::Circle2D;
     float hit{};
     assert(editor::ray_box({{0,0,3},{0,0,-1}},flat,hit) && close_enough(hit,3));
     assert(!editor::ray_box({{0.44F,0.44F,3},{0,0,-1}},flat,hit));
