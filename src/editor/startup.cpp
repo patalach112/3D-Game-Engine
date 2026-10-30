@@ -50,12 +50,17 @@ void configure_startup_diagnostics(bool designer) {
 #else
     sink=std::freopen(crash_file,"a",stderr);
 #endif
+    // C assert() in a GUI subsystem otherwise opens a modal CRT message box
+    // instead of reporting to stderr; report hooks alone do not intercept it.
+    _set_error_mode(_OUT_TO_STDERR);
     if(sink) {
+        (void)std::setvbuf(sink,nullptr,_IONBF,0);
         const int descriptor=_fileno(sink);
         if(descriptor>=0) {
             const auto native=_get_osfhandle(descriptor);
-            if(native!=-1 && native!=-2)
-                DuplicateHandle(GetCurrentProcess(),reinterpret_cast<HANDLE>(native),GetCurrentProcess(),&crash_sink,0,FALSE,DUPLICATE_SAME_ACCESS);
+            HANDLE duplicate{};
+            if(native!=-1 && native!=-2 && DuplicateHandle(GetCurrentProcess(),reinterpret_cast<HANDLE>(native),GetCurrentProcess(),&duplicate,0,FALSE,DUPLICATE_SAME_ACCESS))
+                crash_sink=duplicate;
         }
     }
     SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX);
