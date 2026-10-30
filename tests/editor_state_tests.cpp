@@ -36,6 +36,14 @@ void check_layout() {
 }
 
 int main() {
+    // Maximized borderless windows must use the monitor work area, not cover
+    // taskbars. Exercise a secondary monitor with taskbars on its left and top.
+    MINMAXINFO limits{};
+    editor::apply_work_area_constraints(limits,{1920,-200,4480,1240},{1980,-160,4480,1200},900,600);
+    assert(limits.ptMinTrackSize.x==900 && limits.ptMinTrackSize.y==600);
+    assert(limits.ptMaxPosition.x==60 && limits.ptMaxPosition.y==40);
+    assert(limits.ptMaxSize.x==2500 && limits.ptMaxSize.y==1360);
+
     auto& g = editor::app();
     assert(g.fps_limit == 0); // threaded editor starts uncapped
     // The frame limiter uses deadlines, supports arbitrary limits and treats 0 as

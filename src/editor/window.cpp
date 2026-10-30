@@ -125,6 +125,15 @@ void apply_input_event(HWND hwnd,const engine::InputEvent& event) {
     }
 }
 
+void apply_work_area_constraints(MINMAXINFO& limits,RECT monitor,RECT work,LONG minimum_width,LONG minimum_height) noexcept {
+    limits.ptMinTrackSize={minimum_width,minimum_height};
+    // ptMaxPosition is monitor-relative. Using rcWork rather than rcMonitor is
+    // what keeps a maximized borderless window clear of the taskbar, including
+    // taskbars on secondary monitors and on the top/left edge.
+    limits.ptMaxPosition={work.left-monitor.left,work.top-monitor.top};
+    limits.ptMaxSize={std::max<LONG>(1,work.right-work.left),std::max<LONG>(1,work.bottom-work.top)};
+}
+
 LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
     auto& g=app();
     engine::InputKind kind=engine::InputKind::Other;
@@ -163,8 +172,13 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
     case WM_ERASEBKGND: return 1;
     case WM_GETMINMAXINFO: {
         auto* limits=reinterpret_cast<MINMAXINFO*>(lp);
-        limits->ptMinTrackSize.x=g.hud_loaded?static_cast<LONG>(g.hud.window_minimum.x):900;
-        limits->ptMinTrackSize.y=g.hud_loaded?static_cast<LONG>(g.hud.window_minimum.y):600; return 0;
+        const LONG minimum_width=g.hud_loaded?static_cast<LONG>(g.hud.window_minimum.x):900;
+        const LONG minimum_height=g.hud_loaded?static_cast<LONG>(g.hud.window_minimum.y):600;
+        MONITORINFO monitor{sizeof(MONITORINFO),{},{},0};
+        if(GetMonitorInfoW(MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST),&monitor))
+            apply_work_area_constraints(*limits,monitor.rcMonitor,monitor.rcWork,minimum_width,minimum_height);
+        else limits->ptMinTrackSize={minimum_width,minimum_height};
+        return 0;
     }
     case WM_SIZE: g.minimized=wp==SIZE_MINIMIZED; return 0;
     case WM_CLOSE:

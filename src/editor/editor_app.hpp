@@ -129,6 +129,9 @@ bool hit_gizmo(int sx, int sy, int view_w, int view_h, engine::Entity& entity);
 int gizmo_hit(int sx, int sy, int view_w, int view_h, engine::Entity& entity);
 
 // Procedurowa procedura okna.
+// Apply a monitor's work area to WM_GETMINMAXINFO. Kept separate from the
+// Win32 callback so multi-monitor/taskbar geometry can be tested headlessly.
+void apply_work_area_constraints(MINMAXINFO& limits,RECT monitor,RECT work,LONG minimum_width,LONG minimum_height) noexcept;
 LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp);
 
 } // namespace editor

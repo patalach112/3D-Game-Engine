@@ -100,9 +100,13 @@ void inspector() {
         ImGui::TextWrapped("PPM + ruch: obrót kamery\nKółko nad 3D: zoom\nLPM: wybór i gizmo\nDelete: usuń obiekt\nCtrl+S: zapisz scenę\nTab: kolejne pole\nCtrl+A/C/V: zaznacz / kopiuj / wklej");
     }
     ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Button,{0.38F,0.12F,0.14F,1});
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,{0.62F,0.18F,0.21F,1});
     if (ImGui::Button("Usuń obiekt",{-1,0})) {
         (void)g.scene.remove_entity(g.selected); g.selected=0; g.name_target=0;
+        g.status=L"Usunięto obiekt";
     }
+    ImGui::PopStyleColor(2);
 }
 void set_tool(int mode) {
     auto& g=app();
@@ -147,7 +151,7 @@ void title_bar() {
             if (ImGui::MenuItem("Obracanie","W",g.gizmo_mode==1)) set_tool(1);
             if (ImGui::MenuItem("Skalowanie","E",g.gizmo_mode==2)) set_tool(2);
             ImGui::Separator();
-            if (ImGui::MenuItem("Reset kamery")) g.orbit={};
+            if (ImGui::MenuItem("Reset kamery")) { g.orbit={}; g.orbit.dragging=false; g.drag_axis=-1; }
             if (ImGui::MenuItem("Wycentruj zaznaczony","F")) frame_selected();
             ImGui::EndMenu();
         }
