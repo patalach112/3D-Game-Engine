@@ -161,12 +161,13 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR command_line,int show) {
         main_window.reset();
         return 0;
     } catch (const std::exception& error) {
+        // Preserve the cause even if a broken driver hangs during cleanup.
+        LOG_ERROR("editor","Vulkan/input worker error: %s",error.what());
         state.ready=false;
         try { finish_render(); } catch (...) {} // preserve the original error
         state.render_worker.reset(); // join before touching renderer or destroying HWND
         state.inputs.reset();
         state.renderer.shutdown();
-        LOG_ERROR("editor","Vulkan/input worker error: %s",error.what());
         if(!smoke)MessageBoxA(hwnd,error.what(),"Engine error",MB_OK|MB_ICONERROR);
         return 1;
     }

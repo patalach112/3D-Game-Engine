@@ -1,6 +1,7 @@
 #include "editor_app.hpp"
 
 #include <cassert>
+#include <cfloat>
 #include <cmath>
 #include <iostream>
 #include "dock_layout.hpp"

@@ -25,7 +25,7 @@ LONG WINAPI fatal_exception(EXCEPTION_POINTERS* info) {
     write_crash(text);return EXCEPTION_EXECUTE_HANDLER;
 }
 void abort_signal(int) {write_crash("Fatal SIGABRT (assertion or abort)\r\n");std::_Exit(3);}
-#ifdef _MSC_VER
+#if defined(_MSC_VER) && defined(_DEBUG)
 int report_hook(int,char* message,int*) {write_crash(message);return FALSE;}
 #endif
 }
@@ -35,9 +35,11 @@ void configure_startup_diagnostics(bool designer) {
     FILE* sink{};
 #ifdef _MSC_VER
     (void)freopen_s(&sink,crash_file,"a",stderr);
-    _CrtSetReportHook2(_CRT_RPTH_INSTALL,report_hook);
+#ifdef _DEBUG
+    _CrtSetReportHook2(_CRT_RPTHOOK_INSTALL,report_hook);
     _CrtSetReportMode(_CRT_ASSERT,_CRTDBG_MODE_FILE);
     _CrtSetReportFile(_CRT_ASSERT,_CRTDBG_FILE_STDERR);
+#endif
 #else
     sink=std::freopen(crash_file,"a",stderr);
 #endif

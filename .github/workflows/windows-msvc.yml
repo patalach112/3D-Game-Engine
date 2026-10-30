@@ -86,6 +86,6 @@ jobs:
         if: always()
         with:
           name: Windows-startup-diagnostics
-          path: build-msvc/*/startup-smoke-logs/*.log
+          path: build-msvc/*/startup-smoke-logs/**/*.log
       - name: Package Release
         run: cmake --build build-msvc --config Release --target package
