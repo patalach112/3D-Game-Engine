@@ -80,6 +80,14 @@ jobs:
           # Windows WARP exercises the real Vulkan swapchain without a GPU.
           $icd = Get-ChildItem deps/mesa -Recurse -Filter '*dzn*.json' | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
           if (!$icd) { throw 'Dozen x64 ICD not found' }
+          $driver = Get-ChildItem $icd.DirectoryName -Filter '*vulkan_dzn.dll' | Select-Object -First 1
+          if (!$driver) { throw 'Dozen driver DLL not found' }
+          # A bare DLL name in Mesa's portable manifest can miss the loader's
+          # secure DLL search path. Resolve it explicitly, not via global setup.
+          $manifest = Get-Content $icd.FullName -Raw | ConvertFrom-Json
+          $manifest.ICD.library_path = $driver.FullName
+          $manifest | ConvertTo-Json -Depth 8 | Set-Content $icd.FullName -Encoding utf8
+          'VK_LOADER_DEBUG=error,warn' >> $env:GITHUB_ENV
           "VK_ICD_FILENAMES=$($icd.FullName)" >> $env:GITHUB_ENV
           'DZN_DEBUG=warp' >> $env:GITHUB_ENV
           $icd.DirectoryName >> $env:GITHUB_PATH
