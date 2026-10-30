@@ -110,6 +110,22 @@ DLL `engine.dll` musi pozostać obok EXE. Nie mieszaj DLL z Debug i EXE z Releas
 ani bibliotek zbudowanych różnymi wersjami MSVC/STL. CMake ustawia wspólny CRT
 `/MD` w Release i `/MDd` w Debug oraz UTF-8 dla wszystkich źródeł C++.
 
+Jeśli zwykły edytor nie pokazuje okna, spróbuj uruchomienia bez zapisanego
+HUD-u i własnych bindów (pliki nie są kasowane ani nadpisywane):
+
+```powershell
+.\build\Release\engine_editor.exe --safe-mode
+```
+
+Każdy program ma teraz osobny log: `engine_editor.log` / `editor_hud.log`
+oraz log awarii natywnych/assertów: `engine_editor.crash.log` /
+`editor_hud.crash.log`. Powstają w **katalogu roboczym**, niekoniecznie obok EXE;
+w powyższym przykładzie jest to katalog, z którego wydano polecenie.
+Log rozróżnia inicjalizację od faktycznego pokazania okna i pierwszej ukończonej
+klatki Vulkan. Pusty plik `.crash.log` sam w sobie nie oznacza awarii.
+Bindy runtime uzbrajają się dopiero po puszczeniu klawiszy/przycisków użytych
+do uruchomienia aplikacji; projektant nadal nie wykonuje przypisanych akcji.
+
 Komunikaty konfiguracji o nieznalezieniu `pthread` są normalne na Windows,
 jeśli kończą się `Found Threads: TRUE`. Błędu C2660 z niezgodną sygnaturą
 `scene_geometry` nie naprawia czyszczenie builda — wymaga zgodnych źródeł

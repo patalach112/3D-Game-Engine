@@ -165,8 +165,8 @@ void graphics() {
 }
 }
 void initialize_bindings() {
-    auto& g=app();g.live_bindings=g.hud.bindings;g.binding_capture=-1;g.bindings_initialized=true;
-    if(g.hud_designer)return; // Never load runtime overrides into authored defaults.
+    auto& g=app();g.live_bindings=g.hud.bindings;g.binding_capture=-1;g.bindings_initialized=true;g.bindings_armed=false;
+    if(g.hud_designer || g.safe_mode)return; // Never load runtime overrides into authored defaults.
     const auto path=g.hud_path.parent_path()/L"editor_bindings.cfg";std::string error;std::error_code ec;
     if(std::filesystem::exists(path,ec)&&!load_bindings(path,bindings_fingerprint(g.hud.bindings),g.live_bindings,error))LOG_WARN("bindings","%s",error.c_str());
 }
@@ -178,15 +178,24 @@ void process_bindings() {
     auto& g=app();if(!g.bindings_initialized)initialize_bindings();
     if(g.hud_designer||g.show_settings||g.binding_capture>=0||g.binding_consumed_frame==ImGui::GetFrameCount())return;
     const auto& io=ImGui::GetIO();
+    if(!g.bindings_armed) {
+        // Ignore keys/buttons held by Explorer/IDE at launch (including binds
+        // such as app.close). Require a neutral frame before dispatching.
+        for(int key=ImGuiKey_NamedKey_BEGIN;key<ImGuiKey_NamedKey_END;++key)
+            if(ImGui::IsKeyDown(static_cast<ImGuiKey>(key)))return;
+        if(g.hwnd)for(int key=1;key<256;++key)if(GetAsyncKeyState(key)&0x8000)return;
+        g.bindings_armed=true;return;
+    }
     if(io.WantTextInput||ImGui::IsAnyItemActive()||ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId|ImGuiPopupFlags_AnyPopupLevel))return;
     const auto current_modifiers=modifiers();
     for(const auto& b:g.live_bindings) {
         if(!b.key||b.action.empty()||current_modifiers!=b.modifiers)continue;
         const auto key=gui_key(b.key);
         // Mouse binds must not consume clicks in unrelated editor controls.
-        if(b.key>=400 && (!g.viewport_visible||!scene_input_at(static_cast<int>(io.MousePos.x),static_cast<int>(io.MousePos.y))))continue;
+        if(b.key>=400 && (!g.viewport_visible||!ImGui::IsMousePosValid()||io.MousePos.x<0||io.MousePos.y<0||io.MousePos.x>=g.width||io.MousePos.y>=g.height||!scene_input_at(static_cast<int>(io.MousePos.x),static_cast<int>(io.MousePos.y))))continue;
         if(key!=ImGuiKey_None&&ImGui::IsKeyPressed(key,false)) {
             if(b.key>=400){g.binding_pointer_frame=ImGui::GetFrameCount();g.orbit.dragging=false;}
+            LOG_INFO("bindings","Dispatch: %s",b.action.c_str());
             hud_action(b.action);break;
         }
     }

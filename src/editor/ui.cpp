@@ -400,7 +400,7 @@ void hud_action(const std::string& name) {
     else if(name=="object.circle") add_primitive(engine::PrimitiveType::Circle2D);
     else if(name=="object.square") add_primitive(engine::PrimitiveType::Square2D);
     else if(name=="layout.reset") g.hud_reset=true;
-    else if(name=="app.close") PostMessageW(g.hwnd,WM_CLOSE,0,0);
+    else if(name=="app.close") {LOG_WARN("startup","Close requested by HUD/binding action");PostMessageW(g.hwnd,WM_CLOSE,0,0);}
     else if(name=="settings" || name=="settings.bindings" || name=="settings.graphics") {
         g.show_settings=true;g.focus_settings=true;
         if(name=="settings.bindings")g.settings_tab=2;

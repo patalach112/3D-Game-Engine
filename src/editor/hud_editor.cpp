@@ -443,11 +443,12 @@ void initialize_hud() {
     std::vector<wchar_t> path(32768);const DWORD count=GetModuleFileNameW(nullptr,path.data(),static_cast<DWORD>(path.size()));
     g.hud_path=count?std::filesystem::path(std::wstring(path.data(),count)).parent_path()/L"editor_hud.layout":std::filesystem::path(L"editor_hud.layout");
     std::string error;
-    if(!engine::hud::load(g.hud_path,g.hud,error)) {
+    if(g.safe_mode || !engine::hud::load(g.hud_path,g.hud,error)) {
         g.hud=engine::hud::defaults();
         std::error_code ec;
-        if(std::filesystem::exists(g.hud_path,ec)) {g.hud_message="Nie wczytano HUD: "+error;LOG_WARN("hud","%s",g.hud_message.c_str());}
+        if(!g.safe_mode && std::filesystem::exists(g.hud_path,ec)) {g.hud_message="Nie wczytano HUD: "+error;LOG_WARN("hud","%s",g.hud_message.c_str());}
     }
+    LOG_INFO("startup","HUD loaded: nodes=%zu bindings=%zu docking_bytes=%zu",g.hud.nodes.size(),g.hud.bindings.size(),g.hud.docking.size());
     g.hud_loaded=true;
     initialize_bindings();
 }
