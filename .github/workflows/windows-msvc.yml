@@ -125,3 +125,18 @@ jobs:
           path: build-msvc/*/startup-smoke-logs/**/*.log
       - name: Package Release
         run: cmake --build build-msvc --config Release --target package
+      - name: Scan the Release binaries with Microsoft Defender
+        shell: pwsh
+        run: |
+          $defender = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
+          if (!(Test-Path $defender)) { throw 'Microsoft Defender command-line scanner is unavailable' }
+          $targets = @("${{ github.workspace }}\build-msvc\Release")
+          $targets += Get-ChildItem "${{ github.workspace }}\build-msvc" -Filter 'Starter3DEngine-*.zip' | ForEach-Object FullName
+          foreach ($target in $targets) {
+            & $defender -Scan -ScanType 3 -File $target -DisableRemediation
+            if ($LASTEXITCODE -ne 0) { throw "Microsoft Defender scan failed or found a threat in $target (exit $LASTEXITCODE)" }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Windows-MSVC-portable-editor
+          path: build-msvc/Starter3DEngine-*.zip

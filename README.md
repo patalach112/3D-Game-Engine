@@ -218,6 +218,13 @@ Test importów PE oraz pakowanie ZIP-a wykonuje też workflow Windows MinGW.
 Opcja dotyczy MinGW, nie toolchaina MSVC. Można ją wyłączyć przez `OFF`, ale wtedy
 trzeba samodzielnie dostarczyć zgodne biblioteki runtime kompilatora.
 
+Do dystrybucji na Windows zalecany jest artefakt CI `Windows-MSVC-portable-editor`.
+Jest budowany natywnym toolchainem Microsoft, zawiera metadane wersji PE i przed
+publikacją przechodzi skan Microsoft Defender. Opcjonalna funkcja Dear ImGui do
+uruchamiania poleceń powłoki jest wyłączona. Skan nie zastępuje podpisu Authenticode:
+publiczne wydania powinny zostać podpisane certyfikatem wydawcy, ponieważ reputacja
+niepodpisanego, nowego pliku może nadal powodować ostrzeżenia SmartScreen.
+
 Na komputerze odbiorcy **nadal wymagany jest sterownik GPU z obsługą Vulkan 1.1+**
 (w tym `vulkan-1.dll`). Nie jest potrzebny Vulkan SDK. Nie pakujemy sterownika
 z komputera dewelopera do archiwum.

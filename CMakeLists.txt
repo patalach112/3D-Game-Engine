@@ -143,7 +143,10 @@ target_include_directories(engine_core PUBLIC include PRIVATE "${SHADER_DIR}")
 # One ImGui implementation in the shared engine; consumers use the same ABI/config.
 target_include_directories(engine_core SYSTEM PUBLIC src/engine/ui/third_party/imgui)
 target_link_libraries(engine_core PUBLIC Threads::Threads PRIVATE Vulkan::Vulkan ${ENGINE_ASSIMP_TARGET})
-target_compile_definitions(engine_core PRIVATE ENGINE_BUILD_DLL)
+# The editor does not open web links or launch shell commands. Compile out
+# Dear ImGui's optional ShellExecute/system() helper to keep that capability out
+# of distributed binaries entirely.
+target_compile_definitions(engine_core PRIVATE ENGINE_BUILD_DLL IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS)
 set_target_properties(engine_core PROPERTIES OUTPUT_NAME engine
     VERSION ${PROJECT_VERSION} SOVERSION 1)
 if(ENGINE_USE_ASM)
@@ -190,7 +193,7 @@ if(WIN32)
     target_link_libraries(editor_frontend PUBLIC engine_core user32 comdlg32)
     target_compile_definitions(editor_frontend PUBLIC UNICODE _UNICODE)
     foreach(APP IN ITEMS engine_editor editor_hud)
-        add_executable(${APP} WIN32 src/editor/main.cpp)
+        add_executable(${APP} WIN32 src/editor/main.cpp src/editor/editor.rc)
         target_link_libraries(${APP} PRIVATE editor_frontend)
         if(MINGW)
             target_link_options(${APP} PRIVATE -municode)
