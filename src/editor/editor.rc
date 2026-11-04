@@ -1,0 +1,40 @@
+#include <windows.h>
+
+1 VERSIONINFO
+ FILEVERSION 0,3,0,0
+ PRODUCTVERSION 0,3,0,0
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+ FILEFLAGS VS_FF_DEBUG
+#else
+ FILEFLAGS 0
+#endif
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Starter 3D Engine contributors\0"
+#ifdef EDITOR_HUD_DESIGNER
+            VALUE "FileDescription", "Starter 3D HUD Designer\0"
+            VALUE "InternalName", "editor_hud\0"
+            VALUE "OriginalFilename", "editor_hud.exe\0"
+#else
+            VALUE "FileDescription", "Starter 3D Vulkan Editor\0"
+            VALUE "InternalName", "engine_editor\0"
+            VALUE "OriginalFilename", "engine_editor.exe\0"
+#endif
+            VALUE "FileVersion", "0.3.0\0"
+            VALUE "LegalCopyright", "Copyright (c) Starter 3D Engine contributors\0"
+            VALUE "ProductName", "Starter 3D Engine\0"
+            VALUE "ProductVersion", "0.3.0\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END
